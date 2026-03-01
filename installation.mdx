@@ -1,0 +1,148 @@
+---
+title: Installation
+description: Set up PlayCapture on your local machine
+---
+
+## Prerequisites
+
+Before installing PlayCapture, ensure you have the following:
+
+- **Node.js** 18 or higher
+- **pnpm** (preferred) or npm
+- **Git** for cloning the repository
+
+<Note>
+  PlayCapture uses Playwright to control a Chromium browser, which will be installed automatically during setup.
+</Note>
+
+## Installation steps
+
+<Steps>
+  <Step title="Clone the repository">
+    Clone PlayCapture from GitHub to your local machine:
+
+    ```bash
+    git clone https://github.com/BankkRoll/PlayCapture
+    cd PlayCapture
+    ```
+  </Step>
+
+  <Step title="Install dependencies">
+    Install the required Node.js packages using pnpm (recommended) or npm:
+
+    <CodeGroup>
+    ```bash pnpm
+    pnpm install
+    ```
+
+    ```bash npm
+    npm install
+    ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Install Playwright browsers">
+    PlayCapture requires Playwright's Chromium browser for network capture:
+
+    ```bash
+    npx playwright install
+    ```
+
+    <Tip>
+      This command downloads the Chromium browser binary. It may take a few minutes depending on your internet connection.
+    </Tip>
+  </Step>
+
+  <Step title="Build the CLI (optional)">
+    To use the packaged `playcapture` command, build the TypeScript CLI:
+
+    ```bash
+    pnpm run build:cli
+    ```
+
+    This compiles the TypeScript source to the `dist/` directory.
+  </Step>
+
+  <Step title="Link the command globally (optional)">
+    Make the `playcapture` command available system-wide:
+
+    ```bash
+    npm link
+    ```
+
+    After linking, you can run `playcapture` from any directory.
+  </Step>
+</Steps>
+
+## Development mode
+
+You can run the CLI directly in development without building:
+
+```bash
+pnpm run cli start <url>
+```
+
+This uses `ts-node` to execute the TypeScript source directly, which is useful during development or when testing changes.
+
+## Verify installation
+
+Check that PlayCapture is installed correctly:
+
+<CodeGroup>
+```bash packaged
+playcapture --version
+```
+
+```bash development
+pnpm run cli start --help
+```
+</CodeGroup>
+
+You should see version information and available commands.
+
+## Package structure
+
+The PlayCapture package is structured as follows:
+
+```
+PlayCapture/
+├── package.json              # Package metadata and dependencies
+├── bin/playcapture.js        # Executable wrapper → loads dist/cli.js
+├── tsconfig.cli.json         # CLI TypeScript configuration
+├── src/
+│   ├── dev-tools/
+│   │   ├── cli.ts            # CLI entry point (commands)
+│   │   └── core/
+│   │       ├── browser-launcher.ts
+│   │       ├── capture-coordinator.ts
+│   │       ├── dashboard-server.ts
+│   │       ├── endpoint-inference-engine.ts
+│   │       ├── schema-inference-engine.ts
+│   │       ├── openapi-generator.ts
+│   │       └── network-capture-script.ts
+│   ├── app/                  # Next.js dashboard app
+│   └── components/           # UI components
+└── dist/                     # Compiled output (after build:cli)
+```
+
+## Environment variables (optional)
+
+PlayCapture runs completely locally by default. If you want to enable optional AI features, you can set:
+
+```bash bash
+export AI_GATEWAY_API_KEY="sk_..."
+```
+
+```powershell PowerShell
+$env:AI_GATEWAY_API_KEY = "sk_..."
+```
+
+<Warning>
+  AI features are opt-in. No data is sent to external services unless you explicitly enable AI and provide an API key.
+</Warning>
+
+## Next steps
+
+<Card title="Quickstart" icon="rocket" href="/quickstart">
+  Start capturing your first API with PlayCapture
+</Card>

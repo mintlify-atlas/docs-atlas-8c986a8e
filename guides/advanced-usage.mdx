@@ -1,0 +1,497 @@
+---
+title: Advanced usage
+description: Advanced patterns and techniques for extending PlayCapture's capabilities and integrating with custom workflows.
+---
+
+Explore advanced usage patterns for customizing and extending PlayCapture's functionality.
+
+## Event-driven architecture
+
+PlayCapture uses an event emitter pattern for real-time updates:
+
+```typescript
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+
+const coordinator = new CaptureCoordinator({ aiEnabled: false });
+
+// Listen for new requests
+coordinator.on('request', (request) => {
+  console.log(`${request.method} ${request.url}`);
+});
+
+// Listen for responses
+coordinator.on('response', (response) => {
+  console.log(`Status: ${response.status}`);
+});
+
+// Listen for OpenAPI spec updates
+coordinator.on('openapi:update', (spec) => {
+  console.log('Spec updated:', Object.keys(spec.paths).length, 'paths');
+});
+
+// Listen for WebSocket events
+coordinator.on('websocket', ({ type, data }) => {
+  console.log(`WebSocket ${type}:`, data);
+});
+```
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:82](../source/src/dev-tools/core/capture-coordinator.ts#L82)
+
+## Custom schema inference
+
+Extend the schema inference engine for domain-specific patterns:
+
+```typescript
+import { SchemaInferenceEngine } from '@/dev-tools/core/schema-inference-engine';
+
+class CustomSchemaEngine extends SchemaInferenceEngine {
+  async inferSchemas(input: any) {
+    // Call parent implementation
+    const schemas = await super.inferSchemas(input);
+    
+    // Add custom post-processing
+    if (schemas.request) {
+      schemas.request = this.enhanceSchema(schemas.request);
+    }
+    
+    return schemas;
+  }
+  
+  private enhanceSchema(schema: any) {
+    // Add your custom enhancements
+    return schema;
+  }
+}
+
+const engine = new CustomSchemaEngine({ aiEnabled: true });
+```
+
+Reference: [src/dev-tools/core/schema-inference-engine.ts:71](../source/src/dev-tools/core/schema-inference-engine.ts#L71)
+
+## Accessing field statistics
+
+The schema engine tracks field patterns for advanced analysis:
+
+```typescript
+import { SchemaInferenceEngine } from '@/dev-tools/core/schema-inference-engine';
+
+const engine = new SchemaInferenceEngine({ aiEnabled: false });
+
+// After processing some schemas
+await engine.inferSchemas({
+  requestBody: { userId: 123 },
+  responseBody: { status: 'active' }
+});
+
+// Get statistics
+const stats = engine.getFieldStats();
+
+stats.forEach((fieldStat, fieldPath) => {
+  console.log(`Field: ${fieldPath}`);
+  console.log(`Total count: ${fieldStat.totalCount}`);
+  console.log(`Null count: ${fieldStat.nullCount}`);
+  console.log(`Types:`, Array.from(fieldStat.types.entries()));
+  console.log(`Unique values:`, Array.from(fieldStat.values));
+});
+```
+
+Reference: [src/dev-tools/core/schema-inference-engine.ts:333](../source/src/dev-tools/core/schema-inference-engine.ts#L333)
+
+## Endpoint pattern analysis
+
+Access inferred endpoint patterns directly:
+
+```typescript
+import { EndpointInferenceEngine } from '@/dev-tools/core/endpoint-inference-engine';
+
+const engine = new EndpointInferenceEngine();
+
+// Infer from URLs
+engine.inferEndpoint({ url: 'https://api.example.com/users/123', method: 'GET' });
+engine.inferEndpoint({ url: 'https://api.example.com/users/456', method: 'GET' });
+
+// Get all endpoints
+const endpoints = engine.getEndpoints();
+
+endpoints.forEach((endpoint, key) => {
+  console.log(`${key}:`);
+  console.log(`  Pattern: ${endpoint.pattern}`);
+  console.log(`  Path params: ${endpoint.pathParams.join(', ')}`);
+  console.log(`  Query params: ${Array.from(endpoint.queryParams).join(', ')}`);
+  console.log(`  Samples: ${endpoint.sampleCount}`);
+  console.log(`  Stability: ${endpoint.stability}`);
+});
+
+// Get specific endpoint
+const userEndpoint = engine.getEndpoint('GET', '/users/{id}');
+```
+
+Reference: [src/dev-tools/core/endpoint-inference-engine.ts:275](../source/src/dev-tools/core/endpoint-inference-engine.ts#L275)
+
+## Server URL configuration
+
+Set base URLs in the OpenAPI spec:
+
+```typescript
+import { OpenAPIGenerator } from '@/dev-tools/core/openapi-generator';
+
+const generator = new OpenAPIGenerator();
+
+// Add server URLs
+generator.setServer('https://api.example.com', 'Production');
+generator.setServer('https://staging-api.example.com', 'Staging');
+generator.setServer('http://localhost:3000', 'Development');
+
+const spec = generator.getSpec();
+```
+
+Generated spec:
+
+```json
+{
+  "openapi": "3.1.0",
+  "servers": [
+    {
+      "url": "https://api.example.com",
+      "description": "Production"
+    },
+    {
+      "url": "https://staging-api.example.com",
+      "description": "Staging"
+    },
+    {
+      "url": "http://localhost:3000",
+      "description": "Development"
+    }
+  ]
+}
+```
+
+Reference: [src/dev-tools/core/openapi-generator.ts:336](../source/src/dev-tools/core/openapi-generator.ts#L336)
+
+## Transaction lifecycle
+
+Understand the complete transaction flow:
+
+<Steps>
+  <Step title="Request captured">
+    ```typescript
+    handleNetworkEvent(event: any): void {
+      switch (event.type) {
+        case 'request':
+          this.handleRequest({ ...event.data, timestamp: event.timestamp });
+          break;
+      }
+    }
+    ```
+    
+    Request is stored in the transactions map and emitted.
+  </Step>
+  
+  <Step title="Response captured">
+    ```typescript
+    private handleResponse(response: NetworkResponse): void {
+      const transaction = this.transactions.get(response.id);
+      if (!transaction) return;
+      
+      transaction.response = response;
+      transaction.completedAt = Date.now();
+      
+      this.emit('response', response);
+      this.processTransaction(transaction);
+    }
+    ```
+    
+    Response is matched with request and processing begins.
+  </Step>
+  
+  <Step title="Endpoint inference">
+    ```typescript
+    const endpoint = this.endpointEngine.inferEndpoint({
+      url: request.url,
+      method: request.method
+    });
+    ```
+    
+    URL is analyzed for patterns and parameters.
+  </Step>
+  
+  <Step title="Schema inference">
+    ```typescript
+    const schemas = await this.schemaEngine.inferSchemas({
+      requestBody: request.body,
+      responseBody: response.body,
+      contentType: response.headers['content-type']
+    });
+    ```
+    
+    Request/response bodies are analyzed for structure.
+  </Step>
+  
+  <Step title="OpenAPI update">
+    ```typescript
+    this.openapiGenerator.addEndpoint({
+      endpoint,
+      method: request.method,
+      requestSchema: schemas.request,
+      responseSchema: schemas.response,
+      headers: request.headers,
+      statusCode: response.status
+    });
+    ```
+    
+    Specification is updated with new endpoint information.
+  </Step>
+  
+  <Step title="Embedding generation (AI enabled)">
+    ```typescript
+    if (this.options.aiEnabled && key) {
+      const text = `${request.method} ${request.url}...`;
+      const vector = await embed(text);
+      addEmbeddings([{ id: request.id, vector, text, metadata }]);
+    }
+    ```
+    
+    Optional semantic embeddings are generated.
+  </Step>
+</Steps>
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:179](../source/src/dev-tools/core/capture-coordinator.ts#L179)
+
+## Batch export workflows
+
+Create custom export pipelines:
+
+```typescript
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+import {
+  exportOpenAPISpec,
+  exportTransactions,
+  exportPostmanCollection
+} from '@/dev-tools/utils/export-helpers';
+
+const coordinator = new CaptureCoordinator({ aiEnabled: true });
+
+// ... capture traffic ...
+
+// Export everything at once
+async function exportAll() {
+  const spec = coordinator.getOpenAPISpec();
+  const transactions = coordinator.getTransactions();
+  
+  await Promise.all([
+    exportOpenAPISpec(spec, './output/openapi.json', 'json'),
+    exportOpenAPISpec(spec, './output/openapi.yaml', 'yaml'),
+    exportTransactions(transactions, './output/transactions.json'),
+    exportPostmanCollection(transactions, './output/postman.json')
+  ]);
+  
+  console.log('All exports completed');
+}
+
+await exportAll();
+```
+
+## Custom AI models
+
+Use different AI models for specific tasks:
+
+```typescript
+import { generateText } from '@/dev-tools/core/ai-gateway';
+
+// Use a larger model for complex schemas
+const result = await generateText({
+  model: 'openai/gpt-4o',
+  prompt: 'Analyze this complex API schema...',
+  headers: {
+    'X-Custom-Header': 'value'
+  },
+  providerOptions: {
+    temperature: 0.3,
+    maxTokens: 2000
+  }
+});
+
+// Use a faster model for simple tasks
+const quickResult = await generateText({
+  model: 'openai/gpt-4o-mini',
+  prompt: 'Generate a short description'
+});
+```
+
+Reference: [src/dev-tools/core/ai-gateway.ts:54](../source/src/dev-tools/core/ai-gateway.ts#L54)
+
+## Working with embeddings
+
+Generate embeddings for custom search:
+
+```typescript
+import { embed, embedMany } from '@/dev-tools/core/ai-gateway';
+import { setApiKey } from '@/dev-tools/core/ai-gateway';
+
+// Configure API key
+setApiKey('your-api-key');
+
+// Single embedding
+const query = 'Find endpoints related to user authentication';
+const queryVector = await embed(query);
+
+// Batch embeddings
+const endpoints = [
+  'POST /api/login',
+  'POST /api/logout',
+  'GET /api/users',
+  'POST /api/users'
+];
+
+const vectors = await embedMany(endpoints);
+
+// Use vectors for similarity search
+vectors.forEach((vector, index) => {
+  const similarity = cosineSimilarity(queryVector, vector);
+  console.log(`${endpoints[index]}: ${similarity}`);
+});
+
+function cosineSimilarity(a: number[], b: number[]): number {
+  const dotProduct = a.reduce((sum, val, i) => sum + val * b[i], 0);
+  const magA = Math.sqrt(a.reduce((sum, val) => sum + val * val, 0));
+  const magB = Math.sqrt(b.reduce((sum, val) => sum + val * val, 0));
+  return dotProduct / (magA * magB);
+}
+```
+
+Reference: [src/dev-tools/core/ai-gateway.ts:124](../source/src/dev-tools/core/ai-gateway.ts#L124)
+
+## Streaming text generation
+
+Process long-running AI tasks:
+
+```typescript
+import { streamText } from '@/dev-tools/core/ai-gateway';
+
+const stream = streamText({
+  model: 'openai/gpt-4o-mini',
+  prompt: 'Generate comprehensive API documentation for these endpoints...'
+});
+
+let fullText = '';
+
+for await (const part of stream.textStream) {
+  process.stdout.write(part);
+  fullText += part;
+}
+
+console.log('\n\nGeneration complete:', fullText.length, 'characters');
+```
+
+Reference: [src/dev-tools/core/ai-gateway.ts:102](../source/src/dev-tools/core/ai-gateway.ts#L102)
+
+## Performance monitoring
+
+Track capture performance:
+
+```typescript
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+
+const coordinator = new CaptureCoordinator({ aiEnabled: true });
+
+let requestCount = 0;
+let responseCount = 0;
+let totalLatency = 0;
+
+coordinator.on('request', () => {
+  requestCount++;
+});
+
+coordinator.on('response', (response) => {
+  responseCount++;
+  if (response.duration) {
+    totalLatency += response.duration;
+  }
+});
+
+// Periodic stats
+setInterval(() => {
+  console.log('Stats:');
+  console.log(`  Requests: ${requestCount}`);
+  console.log(`  Responses: ${responseCount}`);
+  console.log(`  Avg latency: ${totalLatency / responseCount}ms`);
+  console.log(`  Pending: ${requestCount - responseCount}`);
+}, 5000);
+```
+
+## Integration with testing frameworks
+
+Capture API traffic during tests:
+
+```typescript
+import { test, expect } from '@playwright/test';
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+import { exportOpenAPISpec } from '@/dev-tools/utils/export-helpers';
+
+test.describe('API capture', () => {
+  let coordinator: CaptureCoordinator;
+  
+  test.beforeEach(() => {
+    coordinator = new CaptureCoordinator({ aiEnabled: false });
+  });
+  
+  test('captures user API calls', async ({ page }) => {
+    // Intercept network requests
+    page.on('request', (request) => {
+      coordinator.handleNetworkEvent({
+        type: 'request',
+        data: {
+          id: request.url(),
+          url: request.url(),
+          method: request.method(),
+          headers: request.headers(),
+          body: request.postData()
+        },
+        timestamp: Date.now()
+      });
+    });
+    
+    // Run your test
+    await page.goto('https://example.com');
+    await page.click('#submit');
+    
+    // Export captured spec
+    const spec = coordinator.getOpenAPISpec();
+    await exportOpenAPISpec(spec, './test-output/api-spec.json', 'json');
+    
+    expect(Object.keys(spec.paths).length).toBeGreaterThan(0);
+  });
+});
+```
+
+## Debug mode
+
+Add verbose logging for troubleshooting:
+
+```typescript
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+
+const coordinator = new CaptureCoordinator({ aiEnabled: true });
+
+// Log all events
+coordinator.on('request', (req) => {
+  console.log('[REQUEST]', req.method, req.url);
+  console.log('  Headers:', Object.keys(req.headers));
+  console.log('  Body:', req.body ? JSON.stringify(req.body).substring(0, 100) : 'none');
+});
+
+coordinator.on('response', (res) => {
+  console.log('[RESPONSE]', res.status, res.statusText);
+  console.log('  Duration:', res.duration, 'ms');
+});
+
+coordinator.on('openapi:update', (spec) => {
+  console.log('[SPEC UPDATE]', Object.keys(spec.paths).length, 'paths');
+  console.log('  Security schemes:', Object.keys(spec.components?.securitySchemes || {}));
+});
+```
+
+<Tip>
+  Use event listeners to build real-time dashboards, export pipelines, or custom analytics on top of PlayCapture's inference engines.
+</Tip>

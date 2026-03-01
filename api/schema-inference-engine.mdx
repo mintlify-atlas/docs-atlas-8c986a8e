@@ -1,0 +1,392 @@
+---
+title: SchemaInferenceEngine
+description: Infers JSON schemas from API request and response samples
+---
+
+## Overview
+
+The `SchemaInferenceEngine` infers JSON Schema-like structures from request and response samples using deterministic heuristics. It can optionally refine inferred schemas using an AI model when `aiEnabled` is set.
+
+### Inference features
+
+- Primitive type detection (string, number, boolean, etc.)
+- Arrays and nested object merging
+- Required/optional field detection
+- Limited enum detection via observed values
+- Optional AI-powered schema refinement
+
+## Constructor
+
+```typescript
+new SchemaInferenceEngine(options: SchemaInferenceOptions)
+```
+
+<ParamField path="options" type="SchemaInferenceOptions" required>
+  Configuration options for schema inference
+  
+  <ParamField path="options.aiEnabled" type="boolean" required>
+    Enable AI-powered schema refinement (adds descriptions, detects enums, identifies patterns)
+  </ParamField>
+</ParamField>
+
+## Methods
+
+### inferSchemas
+
+Infer schemas from request/response pair.
+
+```typescript
+async inferSchemas(input: SchemaInferenceInput): Promise<InferredSchemas>
+```
+
+<ParamField path="input" type="SchemaInferenceInput" required>
+  Request and response bodies for inference
+  
+  <ParamField path="input.requestBody" type="any" required>
+    Request body (parsed JSON or raw data)
+  </ParamField>
+  
+  <ParamField path="input.responseBody" type="any" required>
+    Response body (parsed JSON or raw data)
+  </ParamField>
+  
+  <ParamField path="input.contentType" type="string">
+    Response content-type header (optional)
+  </ParamField>
+</ParamField>
+
+<ResponseField name="schemas" type="InferredSchemas">
+  Inferred JSON schemas for request and response
+  
+  <ResponseField name="request" type="JSONSchema | null">
+    Request schema (null if no body)
+  </ResponseField>
+  
+  <ResponseField name="response" type="JSONSchema | null">
+    Response schema (null if no body)
+  </ResponseField>
+</ResponseField>
+
+**Example:**
+
+```typescript
+const engine = new SchemaInferenceEngine({ aiEnabled: true });
+
+const schemas = await engine.inferSchemas({
+  requestBody: {
+    name: "John Doe",
+    age: 30,
+    email: "john@example.com"
+  },
+  responseBody: {
+    id: "550e8400-e29b-41d4-a716-446655440000",
+    name: "John Doe",
+    age: 30,
+    email: "john@example.com",
+    createdAt: "2024-01-15T10:30:00Z"
+  },
+  contentType: "application/json"
+});
+
+// With AI enabled, you might get:
+// {
+//   request: {
+//     type: "object",
+//     properties: {
+//       name: { type: "string", description: "User's full name" },
+//       age: { type: "integer", description: "User's age in years" },
+//       email: { type: "string", description: "Email address" }
+//     },
+//     required: ["name", "age", "email"]
+//   },
+//   response: {
+//     type: "object",
+//     properties: {
+//       id: { type: "string", description: "Unique user identifier (UUID)" },
+//       name: { type: "string", description: "User's full name" },
+//       age: { type: "integer", description: "User's age in years" },
+//       email: { type: "string", description: "Email address" },
+//       createdAt: { type: "string", description: "ISO 8601 timestamp" }
+//     },
+//     required: ["id", "name", "age", "email", "createdAt"]
+//   }
+// }
+```
+
+### getFieldStats
+
+Get field statistics for debugging.
+
+```typescript
+getFieldStats(): Map<string, FieldStats>
+```
+
+<ResponseField name="stats" type="Map<string, FieldStats>">
+  Map of field paths to statistics (types observed, null counts, unique values)
+</ResponseField>
+
+**Example:**
+
+```typescript
+const stats = engine.getFieldStats();
+
+for (const [fieldPath, fieldStats] of stats) {
+  console.log(`${fieldPath}:`);
+  console.log(`  Total: ${fieldStats.totalCount}`);
+  console.log(`  Nulls: ${fieldStats.nullCount}`);
+  console.log(`  Types: ${Array.from(fieldStats.types.keys()).join(", ")}`);
+}
+```
+
+## Interfaces
+
+### SchemaInferenceInput
+
+Input for schema inference.
+
+```typescript
+interface SchemaInferenceInput {
+  requestBody: any;
+  responseBody: any;
+  contentType?: string;
+}
+```
+
+### InferredSchemas
+
+Inferred schemas for request and response.
+
+```typescript
+interface InferredSchemas {
+  request: JSONSchema | null;
+  response: JSONSchema | null;
+}
+```
+
+### JSONSchema
+
+JSON schema type definitions.
+
+```typescript
+interface JSONSchema {
+  type: string;
+  properties?: Record<string, JSONSchema>;
+  items?: JSONSchema;
+  required?: string[];
+  enum?: any[];
+  nullable?: boolean;
+  description?: string;
+}
+```
+
+## Type inference rules
+
+### Primitive types
+
+```typescript
+// String
+"hello" → { type: "string" }
+
+// Number
+42 → { type: "integer" }
+3.14 → { type: "number" }
+
+// Boolean
+true → { type: "boolean" }
+
+// Null
+null → { type: "null", nullable: true }
+```
+
+### Arrays
+
+```typescript
+// Empty array
+[] → { type: "array", items: { type: "object" } }
+
+// Array with items
+[1, 2, 3] → {
+  type: "array",
+  items: { type: "integer" }
+}
+
+// Array with objects
+[
+  { id: 1, name: "Alice" },
+  { id: 2, name: "Bob" }
+] → {
+  type: "array",
+  items: {
+    type: "object",
+    properties: {
+      id: { type: "integer" },
+      name: { type: "string" }
+    },
+    required: ["id", "name"]
+  }
+}
+```
+
+### Objects
+
+```typescript
+{
+  name: "John",
+  age: 30,
+  email: "john@example.com"
+} → {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    age: { type: "integer" },
+    email: { type: "string" }
+  },
+  required: ["name", "age", "email"]
+}
+```
+
+### Nested structures
+
+```typescript
+{
+  user: {
+    id: 123,
+    profile: {
+      name: "John",
+      age: 30
+    }
+  }
+} → {
+  type: "object",
+  properties: {
+    user: {
+      type: "object",
+      properties: {
+        id: { type: "integer" },
+        profile: {
+          type: "object",
+          properties: {
+            name: { type: "string" },
+            age: { type: "integer" }
+          },
+          required: ["name", "age"]
+        }
+      },
+      required: ["id", "profile"]
+    }
+  },
+  required: ["user"]
+}
+```
+
+## Schema merging
+
+When inferring from array items or multiple samples, schemas are merged:
+
+```typescript
+// Sample 1
+{ id: 1, name: "Alice", email: "alice@example.com" }
+
+// Sample 2
+{ id: 2, name: "Bob" }
+
+// Merged schema
+{
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+    name: { type: "string" },
+    email: { type: "string" }  // Present in merged schema
+  },
+  required: ["id", "name", "email"]  // All observed fields
+}
+```
+
+## AI refinement
+
+When `aiEnabled` is true, schemas are refined to:
+
+1. **Detect enums** - Identify fields with limited, repeated values
+2. **Add descriptions** - Generate concise field descriptions
+3. **Detect patterns** - Identify email, URL, ISO date, UUID, etc.
+4. **Improve field names** - Suggest clearer names where obvious
+
+**Example refinement:**
+
+```typescript
+// Before AI refinement
+{
+  type: "object",
+  properties: {
+    dt: { type: "string" },
+    st: { type: "string" }
+  },
+  required: ["dt", "st"]
+}
+
+// After AI refinement
+{
+  type: "object",
+  properties: {
+    dt: {
+      type: "string",
+      description: "ISO 8601 timestamp",
+      format: "date-time"
+    },
+    st: {
+      type: "string",
+      description: "Status of the request",
+      enum: ["pending", "completed", "failed"]
+    }
+  },
+  required: ["dt", "st"]
+}
+```
+
+## Field statistics tracking
+
+The engine tracks statistics for pattern detection:
+
+```typescript
+interface FieldStats {
+  types: Map<string, number>;     // Type frequency
+  nullCount: number;              // Number of null values
+  totalCount: number;             // Total observations
+  values: Set<any>;               // Unique values (max 20)
+  nested?: Map<string, FieldStats>;
+}
+```
+
+Statistics are used to:
+
+- Detect nullable fields (null count > 0)
+- Identify dominant types (most frequent type)
+- Detect potential enums (limited unique values)
+
+## JSON string parsing
+
+The engine automatically detects and parses JSON strings:
+
+```typescript
+// Input
+responseBody: '{"id":123,"name":"John"}'
+
+// Parsed and inferred
+{
+  type: "object",
+  properties: {
+    id: { type: "integer" },
+    name: { type: "string" }
+  },
+  required: ["id", "name"]
+}
+```
+
+## Error handling
+
+The engine gracefully handles:
+
+- **Invalid JSON**: Returns string schema
+- **AI failures**: Falls back to deterministic inference
+- **Null/undefined values**: Returns nullable schema
+- **Empty objects/arrays**: Returns generic schemas

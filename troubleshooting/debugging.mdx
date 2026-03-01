@@ -1,0 +1,385 @@
+---
+title: Debugging
+description: Diagnostic tools and techniques for troubleshooting PlayCapture
+---
+
+This guide provides step-by-step debugging techniques to diagnose and resolve issues with PlayCapture.
+
+## Enabling verbose logging
+
+PlayCapture uses console logging for diagnostics. To see detailed output:
+
+### CLI debug output
+
+Run PlayCapture with Node.js debug flags:
+
+```bash
+NODE_ENV=development playcapture start https://example.com
+```
+
+This enables development mode with more verbose logging from the Next.js dashboard.
+
+### WebSocket debug messages
+
+WebSocket connection errors are logged as debug messages to avoid noise during startup. Check the browser console for messages like:
+
+```
+WebSocket connection error (will retry)
+Failed to parse WebSocket message: <error>
+```
+
+These messages are expected during the initial connection phase and will stop once connected.
+
+<Note>
+  WebSocket error suppression is implemented in `src/hooks/use-network-capture.ts:182-184` to prevent console spam during auto-retry.
+</Note>
+
+## Diagnosing WebSocket issues
+
+### Check WebSocket connection state
+
+1. Open the dashboard at `http://localhost:3333`
+2. Open browser DevTools (F12)
+3. Go to the Network tab and filter by "WS" (WebSocket)
+4. Look for a connection to `ws://localhost:3333/api/ws`
+
+**Successful connection:**
+- Status: 101 Switching Protocols
+- Messages tab shows `init` message with initial state
+
+**Failed connection:**
+- Status: 400, 404, or failed to establish
+- Check if the CLI process is running
+- Verify the port matches between CLI and browser URL
+
+### Test WebSocket retry logic
+
+The dashboard implements exponential backoff with the following behavior:
+
+```javascript
+delay = min(30000, 500 + 2^attempts * 1000 + random(0-500))
+```
+
+Retry delays:
+- Attempt 1: ~1.5 seconds
+- Attempt 2: ~2.5 seconds  
+- Attempt 3: ~4.5 seconds
+- Attempt 4: ~8.5 seconds
+- Attempt 5+: ~30 seconds (capped)
+
+If connection fails after multiple attempts, check:
+1. Dashboard server is running and listening on the correct port
+2. No firewall blocking localhost connections
+3. Browser console for error details
+
+## Diagnosing browser launch failures
+
+### Check Playwright installation
+
+Verify Playwright browsers are installed:
+
+```bash
+npx playwright --version
+npx playwright install --dry-run
+```
+
+If browsers are missing, install them:
+
+```bash
+npx playwright install chromium
+```
+
+### Test browser launch manually
+
+Create a test script to isolate browser issues:
+
+```javascript test-browser.js
+const { chromium } = require('playwright');
+
+(async () => {
+  const browser = await chromium.launch({ headless: false });
+  const page = await browser.newPage();
+  await page.goto('https://example.com');
+  console.log('Browser launched successfully');
+  await page.waitForTimeout(3000);
+  await browser.close();
+})();
+```
+
+Run with:
+
+```bash
+node test-browser.js
+```
+
+If this fails, the issue is with Playwright installation, not PlayCapture.
+
+### Check system dependencies
+
+On Linux, Playwright requires system libraries:
+
+```bash
+# Ubuntu/Debian
+sudo npx playwright install-deps chromium
+
+# Check what's missing
+ldd ~/.cache/ms-playwright/chromium-*/chrome-linux/chrome
+```
+
+<Warning>
+  Missing libraries like `libnss3`, `libatk-1.0`, or `libgbm1` will cause browser launch failures. Use `playwright install-deps` to install them.
+</Warning>
+
+## Diagnosing capture issues
+
+### Verify network capture script injection
+
+The network capture hooks are injected via `page.addInitScript()`. To verify injection:
+
+1. Launch PlayCapture
+2. In the Playwright browser window, open DevTools
+3. In the Console tab, type: `window.__API_INSPECT_INSTALLED`
+4. Should return `true` if injection succeeded
+
+### Check console messages
+
+PlayCapture sends captured events via `console.log` with the `[API_INSPECT]` prefix. In the Playwright browser DevTools:
+
+1. Open Console tab
+2. Look for messages starting with `[API_INSPECT]`
+3. These should appear when you make network requests
+
+If no `[API_INSPECT]` messages appear:
+- The injection script may have failed
+- Check for JavaScript errors in the page
+- The page might be using a Content Security Policy that blocks inline scripts
+
+### Verify event forwarding
+
+Check that events reach the coordinator:
+
+1. Look at the CLI terminal output
+2. You should see messages about captured requests (in development mode)
+3. Check the dashboard shows "connected" status
+4. Verify transactions appear in the dashboard UI
+
+<Note>
+  The event forwarding logic is in `src/dev-tools/core/browser-launcher.ts:108-128`. It parses console messages with the `[API_INSPECT]` prefix.
+</Note>
+
+## Diagnosing dashboard issues
+
+### Check Next.js compilation
+
+If the dashboard shows errors or blank pages:
+
+```bash
+# Check for Next.js compilation errors
+pnpm run dev
+```
+
+This runs Next.js in development mode with hot reload. Look for compilation errors in the terminal.
+
+### Clear Next.js cache
+
+Stale build artifacts can cause issues:
+
+```bash
+rm -rf .next
+rm -rf node_modules/.cache
+pnpm run dev
+```
+
+### Check API routes
+
+Test the export API endpoint:
+
+```bash
+curl http://localhost:3333/api/export?type=openapi&format=json
+```
+
+Should return a JSON OpenAPI specification. If it returns an error:
+- Check the coordinator is attached to `globalThis`
+- Verify the CLI started the dashboard server successfully
+- Look for errors in the terminal output
+
+### Inspect WebSocket server
+
+The WebSocket server is created with `noServer: true` and handles upgrades selectively on `/api/ws`:
+
+```javascript
+// Should only upgrade requests to /api/ws
+this.httpServer.on('upgrade', (req, socket, head) => {
+  if (pathname === '/api/ws') {
+    this.wsServer.handleUpgrade(...);
+  }
+});
+```
+
+If WebSocket connections fail:
+1. Check that the URL path is exactly `/api/ws`
+2. Verify no other server is intercepting upgrade requests
+3. Check for errors in the CLI terminal during connection attempts
+
+## Advanced debugging techniques
+
+### Inspect coordinator state
+
+The coordinator is accessible from API routes via `globalThis.API_INSPECT_COORDINATOR`. You can create a debug API route:
+
+```typescript src/app/api/debug/route.ts
+import { NextResponse } from 'next/server';
+
+export async function GET() {
+  const coordinator = (globalThis as any).API_INSPECT_COORDINATOR;
+  
+  return NextResponse.json({
+    hasCoordinator: !!coordinator,
+    transactionCount: coordinator?.getTransactions().length || 0,
+    hasOpenAPI: !!coordinator?.getOpenAPISpec(),
+  });
+}
+```
+
+Access at `http://localhost:3333/api/debug`
+
+### Monitor memory usage
+
+For long-running sessions, monitor memory:
+
+```bash
+# macOS/Linux
+ps aux | grep node | grep playcapture
+
+# Watch memory over time
+watch -n 5 'ps aux | grep node | grep playcapture'
+```
+
+High memory usage indicates transaction list growth. Export and restart to clear.
+
+### Test with minimal example
+
+Create a simple test server to isolate issues:
+
+```javascript test-server.js
+const express = require('express');
+const app = express();
+
+app.get('/api/test', (req, res) => {
+  res.json({ message: 'Hello from test API' });
+});
+
+app.get('/', (req, res) => {
+  res.send(`
+    <script>
+      fetch('/api/test')
+        .then(r => r.json())
+        .then(d => console.log(d));
+    </script>
+    <h1>Test Page</h1>
+  `);
+});
+
+app.listen(3000, () => console.log('Test server on http://localhost:3000'));
+```
+
+Run PlayCapture against this server:
+
+```bash
+node test-server.js
+playcapture start http://localhost:3000
+```
+
+You should see the `/api/test` request captured. If not, the issue is with PlayCapture configuration.
+
+## Error recovery
+
+### Graceful shutdown failures
+
+If PlayCapture hangs during shutdown:
+
+1. The CLI implements graceful shutdown in `src/dev-tools/cli.ts:104-129`
+2. It closes browser → dashboard server → exits
+3. Errors during close are caught and logged
+4. Process exits with code 0 (clean) or 1 (error)
+
+If hanging:
+- Check for pending async operations in the terminal output
+- Wait up to 30 seconds for Playwright to close
+- Force quit with `kill -9 <PID>` as last resort
+
+### Recovering from crashes
+
+1. **Kill orphaned processes:**
+   ```bash
+   pkill -f chromium.*playwright
+   pkill -f playcapture
+   ```
+
+2. **Clear port binding:**
+   ```bash
+   # Find process on port 3333
+   lsof -i :3333
+   kill <PID>
+   ```
+
+3. **Reset state:**
+   - No persistent state to clear (all in-memory)
+   - Just restart the process
+
+### Handling unhandled rejections
+
+The CLI catches unhandled promise rejections:
+
+```javascript
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+  void gracefulShutdown(1);
+});
+```
+
+If you see "Unhandled Rejection" errors:
+1. Note the error details in the terminal
+2. Check if it's related to Playwright, Next.js, or WebSocket
+3. Report with full error trace to GitHub Issues
+
+## Debugging checklist
+
+When troubleshooting issues, check:
+
+- [ ] Node.js version 18+ installed
+- [ ] All dependencies installed: `pnpm install`
+- [ ] Playwright browsers installed: `npx playwright install`
+- [ ] Port 3333 available (or custom port specified)
+- [ ] CLI process running and showing "Dashboard running" message
+- [ ] Dashboard accessible in browser at correct URL
+- [ ] WebSocket connected (check dashboard status)
+- [ ] Playwright browser window opened and loaded target URL
+- [ ] Network requests triggered in the Playwright window (not regular browser)
+- [ ] Browser console shows `[API_INSPECT]` messages when making requests
+- [ ] Dashboard shows transactions appearing in real-time
+
+## Getting help
+
+If debugging doesn't resolve your issue:
+
+1. **Collect diagnostic information:**
+   - PlayCapture version: `playcapture --version`
+   - Node.js version: `node --version`
+   - Operating system and version
+   - Full error output from terminal
+   - Browser console errors
+   - Steps to reproduce
+
+2. **Check existing issues:**
+   - Search [GitHub Issues](https://github.com/BankkRoll/PlayCapture/issues)
+   - Look for similar problems and solutions
+
+3. **Report the issue:**
+   - Create a new issue with diagnostic info
+   - Include minimal reproduction if possible
+   - Attach relevant logs and screenshots
+
+<Warning>
+  When reporting issues, avoid including sensitive data like authentication tokens or API keys in logs or screenshots.
+</Warning>

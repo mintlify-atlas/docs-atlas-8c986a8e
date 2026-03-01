@@ -1,0 +1,219 @@
+---
+title: Browser launcher
+description: Control a Playwright Chromium instance for network inspection with injected capture hooks
+---
+
+The `BrowserLauncher` class manages a Playwright browser instance that captures network traffic from web applications. It injects client-side hooks and forwards captured events to a `CaptureCoordinator`.
+
+## Overview
+
+The browser launcher:
+- Launches a Chromium browser via Playwright
+- Injects network capture scripts before page load
+- Captures fetch, XMLHttpRequest, and WebSocket traffic
+- Optionally captures all resource types via Playwright events
+- Forwards captured events to a coordinator
+
+## Constructor
+
+```typescript
+import { BrowserLauncher } from '@playcapture/dev-tools';
+
+const launcher = new BrowserLauncher(options);
+```
+
+### Parameters
+
+<ParamField path="options" type="BrowserLauncherOptions" required>
+  Configuration object for browser launch
+  
+  <ParamField path="options.headless" type="boolean" required>
+    Whether to run browser in headless mode. Set to `false` to see the browser window.
+  </ParamField>
+  
+  <ParamField path="options.coordinator" type="CaptureCoordinator" required>
+    CaptureCoordinator instance for managing captured events
+  </ParamField>
+  
+  <ParamField path="options.fullCapture" type="boolean">
+    Enable Playwright resource capture for all resource types (documents, scripts, images, fonts, etc.). When enabled, captures both injected script events and Playwright events.
+  </ParamField>
+</ParamField>
+
+## Methods
+
+### launch
+
+Launch the browser and navigate to a target URL with network capture enabled.
+
+```typescript
+await launcher.launch(targetUrl);
+```
+
+<ParamField path="targetUrl" type="string" required>
+  Initial URL to load in the browser (e.g., 'https://api.example.com/docs')
+</ParamField>
+
+This method:
+- Launches Chromium with automation detection disabled
+- Creates an isolated browser context with custom viewport (1280x720)
+- Injects network capture hooks before navigation
+- Sets up event forwarding from the page to coordinator
+- Navigates to the target URL and waits for DOM content loaded
+
+<ResponseField name="Promise<void>" type="void">
+  Resolves when the browser has launched and navigated to the target URL
+</ResponseField>
+
+### close
+
+Close the browser and cleanup all resources.
+
+```typescript
+await launcher.close();
+```
+
+This method defensively closes resources in order:
+1. Page
+2. Browser context
+3. Browser instance
+4. Request mapping cache
+
+Errors during close are swallowed to handle race conditions with already-closed resources.
+
+<ResponseField name="Promise<void>" type="void">
+  Resolves when all browser resources are closed
+</ResponseField>
+
+## Capture modes
+
+### Injected script capture (default)
+
+By default, the launcher injects a script that wraps:
+- `window.fetch` - Captures fetch API requests/responses
+- `XMLHttpRequest` - Captures XHR requests/responses
+- `WebSocket` - Captures WebSocket open/send/receive/close events
+
+Events are emitted via console logs with the `[API_INSPECT]` prefix and parsed by the host process.
+
+### Full resource capture (optional)
+
+When `fullCapture: true`, the launcher also listens to Playwright page events:
+- `request` - All outgoing requests including subresources
+- `response` - All responses with body content
+
+This captures:
+- Document requests
+- Script/stylesheet loading
+- Image/font/media requests
+- Worker requests
+- All other resource types
+
+The coordinator deduplicates events from both sources using the `source` field (`injected` vs `playwright`).
+
+## Example
+
+```typescript
+import { BrowserLauncher } from '@playcapture/dev-tools';
+import { CaptureCoordinator } from '@playcapture/dev-tools';
+
+// Create coordinator
+const coordinator = new CaptureCoordinator();
+
+// Create browser launcher
+const launcher = new BrowserLauncher({
+  headless: false, // Show browser window
+  coordinator,
+  fullCapture: true, // Capture all resource types
+});
+
+// Launch and navigate
+await launcher.launch('https://api.example.com/docs');
+
+// Browser is now running and capturing traffic
+// ... interact with the page ...
+
+// When done
+await launcher.close();
+```
+
+## Browser configuration
+
+The launcher configures Chromium with:
+
+```typescript
+{
+  headless: options.headless,
+  args: [
+    '--disable-blink-features=AutomationControlled',
+    '--disable-dev-shm-usage',
+  ],
+}
+```
+
+Browser context settings:
+
+```typescript
+{
+  viewport: { width: 1280, height: 720 },
+  userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+}
+```
+
+## Captured request data
+
+Each captured request includes:
+
+<ResponseField name="id" type="string">
+  Unique request identifier (timestamp + random string)
+</ResponseField>
+
+<ResponseField name="url" type="string">
+  Full resolved URL
+</ResponseField>
+
+<ResponseField name="method" type="string">
+  HTTP method (GET, POST, etc.)
+</ResponseField>
+
+<ResponseField name="headers" type="Record<string, string>">
+  Request headers as key-value pairs
+</ResponseField>
+
+<ResponseField name="body" type="string | null">
+  Request body content (if any)
+</ResponseField>
+
+<ResponseField name="timestamp" type="number">
+  Capture timestamp in milliseconds
+</ResponseField>
+
+<ResponseField name="resourceType" type="string">
+  Resource type (only in fullCapture mode: document, xhr, fetch, script, etc.)
+</ResponseField>
+
+## Captured response data
+
+<ResponseField name="id" type="string">
+  Matching request identifier
+</ResponseField>
+
+<ResponseField name="status" type="number">
+  HTTP status code (200, 404, etc.)
+</ResponseField>
+
+<ResponseField name="statusText" type="string">
+  HTTP status text
+</ResponseField>
+
+<ResponseField name="headers" type="Record<string, string>">
+  Response headers as key-value pairs
+</ResponseField>
+
+<ResponseField name="body" type="any">
+  Response body (parsed JSON if applicable, otherwise text or base64 for binary)
+</ResponseField>
+
+<ResponseField name="duration" type="number">
+  Request duration in milliseconds (injected capture only)
+</ResponseField>

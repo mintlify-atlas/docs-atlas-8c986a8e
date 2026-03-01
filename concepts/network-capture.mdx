@@ -1,0 +1,452 @@
+---
+title: Network capture
+description: Learn how PlayCapture intercepts browser traffic using injected scripts and Playwright
+---
+
+PlayCapture uses two complementary techniques to capture comprehensive network traffic from your browser. This page explains the implementation details of both approaches.
+
+## Capture methods
+
+PlayCapture supports dual-mode capture for maximum flexibility:
+
+<CardGroup cols={2}>
+  <Card title="Injected script" icon="code" href="#injected-script-capture">
+    Lightweight in-page hooks that intercept fetch, XMLHttpRequest, and WebSocket
+  </Card>
+  <Card title="Playwright CDP" icon="browser" href="#playwright-resource-capture">
+    Full resource capture via Chrome DevTools Protocol for comprehensive coverage
+  </Card>
+</CardGroup>
+
+## Injected script capture
+
+The injected script runs in your browser's page context and wraps native networking APIs.
+
+### Script injection
+
+The capture script is injected using Playwright's `addInitScript()` which executes before page load:
+
+```typescript
+// src/dev-tools/core/browser-launcher.ts:102
+private async injectCaptureHooks(): Promise<void> {
+  if (!this.page) return;
+  await this.page.addInitScript(NETWORK_CAPTURE_SCRIPT);
+}
+```
+
+This ensures hooks are in place before any application code runs, capturing all traffic from the start.
+
+### Fetch API interception
+
+The script wraps `window.fetch` to capture all Fetch API calls:
+
+```javascript
+const originalFetch = window.fetch;
+window.fetch = async function(...args) {
+  const requestId = generateId();
+  const startTime = performance.now();
+  
+  const [input, init = {}] = args;
+  const url = new URL(String(input?.url || input), location.href).toString();
+  const method = init.method || 'GET';
+  
+  // Capture request
+  emit('request', {
+    id: requestId,
+    url,
+    method,
+    headers: init.headers ? Object.fromEntries(new Headers(init.headers)) : {},
+    body: init.body ? String(init.body) : null
+  });
+  
+  // Execute original fetch
+  const response = await originalFetch.apply(this, args);
+  const endTime = performance.now();
+  
+  // Capture response
+  const contentType = response.headers.get('content-type');
+  const responseBody = await parseResponseBody(response, contentType);
+  
+  emit('response', {
+    id: requestId,
+    status: response.status,
+    statusText: response.statusText,
+    headers: Object.fromEntries(response.headers),
+    body: responseBody,
+    duration: endTime - startTime
+  });
+  
+  return response;
+};
+```
+
+<Note>
+  The wrapper preserves the original fetch behavior while capturing detailed timing and payload information.
+</Note>
+
+### XMLHttpRequest interception
+
+For legacy AJAX requests, the script wraps `XMLHttpRequest`:
+
+```javascript
+const OriginalXHR = window.XMLHttpRequest;
+window.XMLHttpRequest = function() {
+  const xhr = new OriginalXHR();
+  const requestId = generateId();
+  let requestData = {};
+  
+  // Wrap open() to capture method and URL
+  const originalOpen = xhr.open;
+  xhr.open = function(method, url, ...rest) {
+    requestData = {
+      id: requestId,
+      method,
+      url: new URL(String(url), location.href).toString(),
+      headers: {}
+    };
+    return originalOpen.apply(this, [method, url, ...rest]);
+  };
+  
+  // Wrap setRequestHeader() to capture headers
+  const originalSetRequestHeader = xhr.setRequestHeader;
+  xhr.setRequestHeader = function(header, value) {
+    requestData.headers[header] = value;
+    return originalSetRequestHeader.apply(this, [header, value]);
+  };
+  
+  // Wrap send() to emit request event
+  const originalSend = xhr.send;
+  xhr.send = function(body) {
+    requestData.body = body || null;
+    emit('request', requestData);
+    return originalSend.apply(this, [body]);
+  };
+  
+  // Listen for response
+  xhr.addEventListener('load', function() {
+    emit('response', {
+      id: requestId,
+      status: xhr.status,
+      statusText: xhr.statusText,
+      headers: parseResponseHeaders(xhr.getAllResponseHeaders()),
+      body: xhr.response
+    });
+  });
+  
+  return xhr;
+};
+```
+
+### WebSocket capture
+
+WebSocket connections are tracked for real-time communication:
+
+```javascript
+const OriginalWebSocket = window.WebSocket;
+window.WebSocket = function(url, protocols) {
+  const ws = new OriginalWebSocket(url, protocols);
+  const socketId = generateId();
+  
+  emit('websocket:open', { id: socketId, url });
+  
+  // Capture outgoing messages
+  const originalSend = ws.send;
+  ws.send = function(data) {
+    emit('websocket:send', { id: socketId, data });
+    return originalSend.apply(this, [data]);
+  };
+  
+  // Capture incoming messages
+  ws.addEventListener('message', function(event) {
+    emit('websocket:receive', { id: socketId, data: event.data });
+  });
+  
+  ws.addEventListener('close', function() {
+    emit('websocket:close', { id: socketId });
+  });
+  
+  return ws;
+};
+```
+
+### Event emission
+
+Captured events are sent to the host process via console logs:
+
+```javascript
+function emit(type, data) {
+  console.log('[API_INSPECT]' + JSON.stringify({
+    type,
+    data,
+    timestamp: Date.now()
+  }));
+}
+```
+
+The browser launcher listens for these console messages and forwards them:
+
+```typescript
+// src/dev-tools/core/browser-launcher.ts:112
+this.page.on("console", async (msg) => {
+  const text = msg.text();
+  if (text.startsWith("[API_INSPECT]")) {
+    const data = JSON.parse(text.replace("[API_INSPECT]", ""));
+    this.options.coordinator.handleNetworkEvent({
+      ...data,
+      source: "injected"
+    });
+  }
+});
+```
+
+## Playwright resource capture
+
+When full capture mode is enabled, Playwright's native events provide additional coverage.
+
+### Request capture
+
+Playwright emits `request` events for all network activity:
+
+```typescript
+// src/dev-tools/core/browser-launcher.ts:142
+this.page.on("request", (req) => {
+  const id = generateId();
+  this.requestMap.set(req, id); // Store for response matching
+  
+  const requestData = {
+    id,
+    url: req.url(),
+    method: req.method(),
+    headers: req.headers(),
+    body: req.postData(),
+    timestamp: Date.now(),
+    resourceType: req.resourceType() // document, script, xhr, fetch, etc.
+  };
+  
+  this.options.coordinator.handleNetworkEvent({
+    type: "request",
+    data: requestData,
+    timestamp: Date.now(),
+    source: "playwright"
+  });
+});
+```
+
+### Response capture
+
+Matching responses are captured and linked to their requests:
+
+```typescript
+// src/dev-tools/core/browser-launcher.ts:173
+this.page.on("response", async (res) => {
+  const req = res.request();
+  const id = this.requestMap.get(req) || generateId();
+  
+  // Attempt to extract body
+  let body = null;
+  try {
+    body = await res.text();
+  } catch {
+    try {
+      const buf = await res.body();
+      if (Buffer.isBuffer(buf)) body = buf.toString("base64");
+    } catch {
+      body = null;
+    }
+  }
+  
+  const responseData = {
+    id,
+    status: res.status(),
+    statusText: res.statusText(),
+    headers: res.headers(),
+    body
+  };
+  
+  this.options.coordinator.handleNetworkEvent({
+    type: "response",
+    data: responseData,
+    timestamp: Date.now(),
+    source: "playwright"
+  });
+});
+```
+
+<Warning>
+  Reading response bodies in Playwright can fail for binary content or large responses. The implementation includes fallback logic to handle these cases gracefully.
+</Warning>
+
+## Deduplication strategy
+
+When both capture methods are active, duplicate events are filtered by the coordinator:
+
+```typescript
+// src/dev-tools/core/capture-coordinator.ts:106
+handleNetworkEvent(event: any): void {
+  const { type, data, timestamp, source } = event;
+  
+  // If full capture is enabled, prefer Playwright events
+  if (this.options.fullCapture && source === "injected") {
+    return; // Skip injected events to avoid duplicates
+  }
+  
+  // Process the event...
+}
+```
+
+This ensures each transaction is recorded exactly once.
+
+## Traffic filtering
+
+PlayCapture automatically filters out framework noise to keep specs clean:
+
+### Internal path filtering
+
+```typescript
+// src/dev-tools/core/capture-coordinator.ts:23
+const _internalPathsRe = /(^\\_next\\/|\\_next\\/|\/static\\/|\/favicon\\.ico$|\\.map$|\\.hot-update\\.js$|\\.well-known\\/)/i;
+
+function isInternalUrlLocal(url?: string | null) {
+  if (!url) return false;
+  try {
+    const u = new URL(url, "http://localhost");
+    const path = (u.pathname || "") + (u.search || "");
+    return _internalPathsRe.test(path);
+  } catch {
+    return _internalPathsRe.test(String(url));
+  }
+}
+```
+
+This filters:
+- Next.js build artifacts (`/_next/`)
+- Static assets (`/static/`)
+- Source maps (`.map`)
+- Hot module reload (`.hot-update.js`)
+- Well-known paths (`/.well-known/`)
+
+### Header-based filtering
+
+```typescript
+// src/dev-tools/core/capture-coordinator.ts:140
+const lowerHeaders: Record<string, string> = {};
+Object.entries(request.headers || {}).forEach(([k, v]) => {
+  lowerHeaders[k.toLowerCase()] = String(v);
+});
+
+// Skip Next.js prefetch and RSC requests
+if (lowerHeaders["next-router-prefetch"] || lowerHeaders["rsc"]) {
+  return;
+}
+```
+
+## Response body parsing
+
+The injected script intelligently parses response bodies based on content type:
+
+```javascript
+async function parseResponseBody(response, contentType) {
+  try {
+    // JSON responses
+    if (contentType && contentType.includes('application/json')) {
+      return await response.clone().json();
+    }
+    
+    // Text responses
+    const text = await response.clone().text();
+    
+    // Best-effort JSON parsing when no content type
+    if (!contentType) {
+      try {
+        return JSON.parse(text);
+      } catch {
+        // Not JSON, return as text
+      }
+    }
+    
+    return text;
+  } catch {
+    return null;
+  }
+}
+```
+
+<Note>
+  The `response.clone()` method is used to avoid consuming the response stream, allowing the application to still read the body normally.
+</Note>
+
+## Resource type coverage
+
+Playwright's full capture mode supports all Chrome DevTools Protocol resource types:
+
+<CardGroup cols={3}>
+  <Card title="Documents" icon="file">
+    HTML pages and frames
+  </Card>
+  <Card title="XHR/Fetch" icon="right-left">
+    API requests and AJAX calls
+  </Card>
+  <Card title="Scripts" icon="file-code">
+    JavaScript bundles
+  </Card>
+  <Card title="Stylesheets" icon="palette">
+    CSS files
+  </Card>
+  <Card title="Images" icon="image">
+    PNG, JPEG, SVG, WebP
+  </Card>
+  <Card title="Media" icon="video">
+    Audio and video files
+  </Card>
+  <Card title="Fonts" icon="font">
+    Web fonts (WOFF, TTF)
+  </Card>
+  <Card title="WebSocket" icon="signal">
+    Real-time connections
+  </Card>
+  <Card title="Manifest" icon="file-lines">
+    PWA manifests
+  </Card>
+</CardGroup>
+
+However, only XHR, Fetch, and WebSocket traffic contributes to OpenAPI spec generation.
+
+## Performance considerations
+
+### Memory management
+
+Transactions are stored in-memory using a `Map` structure:
+
+```typescript
+private transactions = new Map<string, NetworkTransaction>();
+```
+
+For long-running sessions, consider implementing:
+- Transaction eviction after a time threshold
+- Size limits on the transaction map
+- Periodic export and clearing
+
+### Response cloning overhead
+
+The injected script clones responses to read bodies without interfering with the application:
+
+```javascript
+const responseBody = await response.clone().json();
+```
+
+This doubles memory usage temporarily but ensures non-interference.
+
+### Playwright body retrieval
+
+Reading response bodies in Playwright can be expensive for large payloads. The implementation wraps calls in try-catch to handle failures gracefully.
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Inference engines" icon="brain" href="/concepts/inference-engines">
+    Learn how captured traffic is analyzed to generate OpenAPI specs
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    Understand how network capture fits into the overall system
+  </Card>
+</CardGroup>

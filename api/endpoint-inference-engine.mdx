@@ -1,0 +1,257 @@
+---
+title: EndpointInferenceEngine
+description: Infers stable API endpoint patterns from observed request URLs
+---
+
+## Overview
+
+The `EndpointInferenceEngine` groups observed request URLs by structure, infers stable endpoint patterns, detects path parameters and query parameters, and tracks stability metrics for each inferred endpoint.
+
+### Pattern detection
+
+- Groups similar URLs by structure
+- Detects path parameters (IDs, UUIDs, etc.)
+- Tracks query parameter patterns
+- Calculates stability metrics
+
+**Example transformations:**
+
+- `/api/user/123` + `/api/user/456` → `/api/user/{id}`
+- `/api/posts/abc-def-123` → `/api/posts/{id}`
+
+## Constructor
+
+```typescript
+new EndpointInferenceEngine()
+```
+
+No configuration options required.
+
+## Methods
+
+### inferEndpoint
+
+Infer endpoint pattern from a request URL.
+
+```typescript
+inferEndpoint(input: EndpointInferenceInput): InferredEndpoint
+```
+
+<ParamField path="input" type="EndpointInferenceInput" required>
+  Request data for inference
+  
+  <ParamField path="input.url" type="string" required>
+    Request URL (absolute or relative)
+  </ParamField>
+  
+  <ParamField path="input.method" type="string" required>
+    HTTP method (GET, POST, etc.)
+  </ParamField>
+</ParamField>
+
+<ResponseField name="endpoint" type="InferredEndpoint">
+  Inferred endpoint with pattern and metadata
+  
+  <ResponseField name="pattern" type="string">
+    Endpoint pattern with path parameters (e.g., `/api/user/{id}`)
+  </ResponseField>
+  
+  <ResponseField name="pathParams" type="string[]">
+    Detected path parameter names
+  </ResponseField>
+  
+  <ResponseField name="queryParams" type="Set<string>">
+    Set of observed query parameter names
+  </ResponseField>
+  
+  <ResponseField name="sampleCount" type="number">
+    Number of requests observed for this endpoint
+  </ResponseField>
+  
+  <ResponseField name="stability" type="number">
+    Stability score (0.0 to 1.0) based on parameter consistency
+  </ResponseField>
+</ResponseField>
+
+**Example:**
+
+```typescript
+const engine = new EndpointInferenceEngine();
+
+const endpoint1 = engine.inferEndpoint({
+  url: "https://api.example.com/users/123",
+  method: "GET"
+});
+// pattern: "/users/123"
+// pathParams: []
+
+const endpoint2 = engine.inferEndpoint({
+  url: "https://api.example.com/users/456",
+  method: "GET"
+});
+// After pattern detection:
+// pattern: "/users/{id}"
+// pathParams: ["id"]
+```
+
+### getEndpoints
+
+Get all inferred endpoints.
+
+```typescript
+getEndpoints(): Map<string, InferredEndpoint>
+```
+
+<ResponseField name="endpoints" type="Map<string, InferredEndpoint>">
+  Map of endpoint keys to inferred endpoint data. Keys are in format `{method}:{path}`.
+</ResponseField>
+
+**Example:**
+
+```typescript
+const endpoints = engine.getEndpoints();
+
+for (const [key, endpoint] of endpoints) {
+  console.log(`${key}: ${endpoint.pattern} (${endpoint.sampleCount} samples)`);
+}
+```
+
+### getEndpoint
+
+Get endpoint by method and path.
+
+```typescript
+getEndpoint(method: string, path: string): InferredEndpoint | undefined
+```
+
+<ParamField path="method" type="string" required>
+  HTTP method (GET, POST, etc.)
+</ParamField>
+
+<ParamField path="path" type="string" required>
+  URL path
+</ParamField>
+
+<ResponseField name="endpoint" type="InferredEndpoint | undefined">
+  Inferred endpoint if found, undefined otherwise
+</ResponseField>
+
+**Example:**
+
+```typescript
+const endpoint = engine.getEndpoint("GET", "/users/{id}");
+
+if (endpoint) {
+  console.log(`Path params: ${endpoint.pathParams.join(", ")}`);
+}
+```
+
+## Interfaces
+
+### EndpointInferenceInput
+
+Request data for endpoint inference.
+
+```typescript
+interface EndpointInferenceInput {
+  url: string;
+  method: string;
+}
+```
+
+### InferredEndpoint
+
+Inferred endpoint with stability metrics.
+
+```typescript
+interface InferredEndpoint {
+  pattern: string;
+  pathParams: string[];
+  queryParams: Set<string>;
+  sampleCount: number;
+  stability: number;
+}
+```
+
+## Pattern detection algorithm
+
+### Path parameter detection
+
+The engine detects path parameters by:
+
+1. **Grouping by structure** - Groups URLs with the same number of path segments
+2. **Analyzing variations** - Compares segment values across similar paths
+3. **Pattern matching** - Identifies segments that look like parameters:
+   - Numeric IDs: `/users/123`, `/users/456` → `/users/{id}`
+   - UUIDs: `/posts/550e8400-e29b-41d4-a716-446655440000` → `/posts/{id}`
+   - Alphanumeric IDs: `/resources/abc123def` → `/resources/{id}`
+
+### Trigger timing
+
+Pattern detection runs periodically:
+
+- Triggered every 10 requests
+- Analyzes request history for patterns
+- Updates existing endpoint patterns
+
+### Stability scoring
+
+Stability score is calculated as:
+
+```typescript
+stability = 1 - (variableSegments / totalSegments)
+```
+
+- **1.0**: All segments are literal (e.g., `/api/users`)
+- **0.5**: Half the segments are parameters (e.g., `/api/{resource}/{id}`)
+- **0.0**: All segments are parameters (rare)
+
+## URL parsing
+
+The engine handles:
+
+- **Absolute URLs**: `https://api.example.com/users/123?page=1`
+- **Relative URLs**: `/api/users/123?page=1`
+- **Query parameters**: Extracted and tracked separately
+- **Invalid URLs**: Gracefully handled with fallback parsing
+
+**Example:**
+
+```typescript
+// Absolute URL
+engine.inferEndpoint({
+  url: "https://api.example.com/users/123?sort=name&page=2",
+  method: "GET"
+});
+// pattern: "/users/123"
+// queryParams: Set(["sort", "page"])
+
+// Relative URL
+engine.inferEndpoint({
+  url: "/api/users/123?sort=name",
+  method: "GET"
+});
+// pattern: "/api/users/123"
+// queryParams: Set(["sort"])
+```
+
+## Parameter naming
+
+The engine infers parameter names based on value patterns:
+
+- **UUIDs**: Named `id`
+- **Numeric values**: Named `id`
+- **Other patterns**: Named `param{position}` (e.g., `param0`, `param1`)
+
+**Example:**
+
+```typescript
+// UUID parameter
+"/posts/550e8400-e29b-41d4-a716-446655440000" → "/posts/{id}"
+
+// Numeric parameter
+"/users/123" → "/users/{id}"
+
+// Generic parameter
+"/search/query-text/results" → "/search/{param0}/results"
+```

@@ -1,0 +1,145 @@
+---
+title: Dashboard server
+description: Host a local Next.js dashboard with WebSocket feed for streaming capture events
+---
+
+The `DashboardServer` class manages a local HTTP server running a Next.js application and a WebSocket server for streaming network capture events to connected clients.
+
+## Overview
+
+The dashboard server:
+- Hosts a Next.js app for visualizing captured network traffic
+- Manages WebSocket connections for real-time event streaming
+- Subscribes to `CaptureCoordinator` events and broadcasts them to clients
+- Handles both HTTP requests and WebSocket upgrades on a single port
+
+## Constructor
+
+```typescript
+import { DashboardServer } from '@playcapture/dev-tools';
+
+const server = new DashboardServer(options);
+```
+
+### Parameters
+
+<ParamField path="options" type="DashboardServerOptions" required>
+  Configuration object for the dashboard server
+  
+  <ParamField path="options.port" type="number" required>
+    Port number for the HTTP server (e.g., 3000)
+  </ParamField>
+  
+  <ParamField path="options.coordinator" type="CaptureCoordinator" required>
+    CaptureCoordinator instance to subscribe to for network events
+  </ParamField>
+</ParamField>
+
+## Methods
+
+### start
+
+Start the HTTP and WebSocket servers.
+
+```typescript
+await server.start();
+```
+
+This method:
+- Initializes the Next.js application in development mode
+- Creates an HTTP server to handle Next.js requests
+- Sets up a WebSocket server on `/api/ws` path
+- Subscribes to coordinator events (request, response, openapi:update, websocket)
+- Broadcasts initial state to newly connected clients
+- Exposes the coordinator globally for Next.js API routes
+
+<ResponseField name="Promise<void>" type="void">
+  Resolves when the server is listening on the configured port
+</ResponseField>
+
+### stop
+
+Stop the server and close all connections.
+
+```typescript
+await server.stop();
+```
+
+This method:
+- Closes all active WebSocket client connections
+- Shuts down the WebSocket server
+- Shuts down the HTTP server
+- Removes the global coordinator reference
+
+<ResponseField name="Promise<void>" type="void">
+  Resolves when all servers are closed
+</ResponseField>
+
+## Event broadcasting
+
+The dashboard server automatically broadcasts these event types to all connected WebSocket clients:
+
+- `request` - HTTP/fetch request captured
+- `response` - HTTP/fetch response received
+- `openapi:update` - OpenAPI specification updated
+- `websocket` - WebSocket event captured
+
+Each WebSocket client receives an initial `init` message containing:
+- Current transactions from the coordinator
+- Current OpenAPI specification
+
+## Example
+
+```typescript
+import { DashboardServer } from '@playcapture/dev-tools';
+import { CaptureCoordinator } from '@playcapture/dev-tools';
+
+// Create coordinator instance
+const coordinator = new CaptureCoordinator();
+
+// Create and start dashboard server
+const server = new DashboardServer({
+  port: 3000,
+  coordinator,
+});
+
+await server.start();
+console.log('Dashboard running on http://localhost:3000');
+
+// When done
+await server.stop();
+```
+
+## WebSocket protocol
+
+Clients connect to `ws://localhost:{port}/api/ws` and receive JSON messages:
+
+```typescript
+// Initial state message
+{
+  type: 'init',
+  data: {
+    transactions: [...],
+    openapi: {...}
+  }
+}
+
+// Event messages
+{
+  type: 'request' | 'response' | 'openapi:update' | 'websocket',
+  data: {...}
+}
+```
+
+## Implementation details
+
+The dashboard server uses a selective WebSocket upgrade strategy:
+- Only accepts upgrades for the `/api/ws` path
+- Other upgrade requests (like Next.js HMR) pass through
+- Prevents conflicts with Next.js development features
+- Sets WebSocket binary type to `arraybuffer` for compatibility
+
+Error handling:
+- Failed client sends don't crash the server
+- Client errors are logged and the connection is closed
+- Upgrade errors destroy the socket to prevent resource leaks

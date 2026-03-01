@@ -1,80 +1,221 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: Quickstart
+description: Capture your first API specification in minutes
 ---
 
-## Get started in three steps
+This guide will walk you through capturing your first API with PlayCapture. You'll launch a browser, interact with a web application, and export an OpenAPI specification.
 
-Get your documentation site running locally and make your first customization.
+## Before you begin
 
-### Step 1: Set up your local environment
+Make sure you've completed the [installation](/installation) steps. You should have:
+
+- PlayCapture installed and dependencies ready
+- Playwright browsers installed
+- The `playcapture` command available (or use `pnpm run cli` for development mode)
+
+## Basic usage
+
+<Steps>
+  <Step title="Start capturing traffic">
+    Launch PlayCapture with a target URL:
+
+    <CodeGroup>
+    ```bash packaged
+    playcapture start https://example.com
+    ```
+
+    ```bash development
+    pnpm run cli start https://example.com
+    ```
+    </CodeGroup>
+
+    You'll see output similar to this:
+
+    ```bash
+    🔍 API Inspect
+
+    Target: https://example.com
+    Dashboard: http://localhost:3333
+
+    Starting dashboard and browser...
+    • Dashboard URL : http://localhost:3333
+    • WebSocket feed : ws://localhost:3333
+    • Export endpoint : http://localhost:3333/api/export?type=openapi&format=json
+    • Playwright browser : visible (default)
+
+    Quick tips:
+    - Open the dashboard in your browser to see live requests, inferred endpoints and schemas.
+    - Interact with the Playwright browser window that opens to generate traffic.
+    - Use the Export button in the UI or the /api/export endpoint to download OpenAPI specs.
+
+    ✓ Dashboard running on http://localhost:3333
+    ✓ Browser launched with network capture enabled
+
+    → Interact with the Playwright browser window. Live traffic will appear in the dashboard.
+    ```
+
+    <Note>
+      The Playwright browser window opens in visible mode by default so you can see your interactions. Use `--headless` to run it in the background.
+    </Note>
+  </Step>
+
+  <Step title="Open the dashboard">
+    Navigate to the dashboard in your browser:
+
+    ```
+    http://localhost:3333
+    ```
+
+    The dashboard shows:
+    - **Live request stream**: All captured network requests with filters
+    - **Discovered endpoints**: Grouped by pattern (e.g., `/users/{id}`)
+    - **Inferred schemas**: JSON schemas for request/response bodies
+    - **Generated OpenAPI spec**: Real-time OpenAPI 3.1 specification
+  </Step>
+
+  <Step title="Interact with the application">
+    Use the Playwright browser window to interact with your target application:
+
+    - Log in to the application
+    - Navigate through different pages
+    - Submit forms or trigger API calls
+    - Perform typical user workflows
+
+    Each interaction generates network requests that PlayCapture captures and analyzes in real-time.
+
+    <Tip>
+      The more you interact with the app, the more comprehensive your OpenAPI specification becomes. Try to exercise all the endpoints you want to document.
+    </Tip>
+  </Step>
+
+  <Step title="Export the OpenAPI specification">
+    Once you've captured the API traffic you need, export the specification from the dashboard:
+
+    - Click the **Export** button in the dashboard UI
+    - Choose your preferred format:
+      - OpenAPI JSON (`openapi.json`)
+      - OpenAPI YAML (`openapi.yaml`)
+      - Postman collection
+      - cURL commands for individual endpoints
+
+    You can also export directly via the API endpoint:
+
+    ```bash
+    curl http://localhost:3333/api/export?type=openapi&format=json -o openapi.json
+    ```
+  </Step>
+
+  <Step title="Stop the capture">
+    When you're done, stop PlayCapture by pressing `Ctrl+C` in the terminal:
+
+    ```bash
+    ⏸  Shutting down...
+    ✓ Closed successfully
+    ```
+  </Step>
+</Steps>
+
+## CLI options
+
+Customize PlayCapture's behavior with command-line options:
+
+```bash
+playcapture start <url> [options]
+```
+
+### Available options
+
+<ResponseField name="-p, --port" type="number" default="3333">
+  Local dashboard port number
+</ResponseField>
+
+<ResponseField name="--headless" type="boolean" default="false">
+  Run the Playwright browser in headless mode (no visible window)
+</ResponseField>
+
+<ResponseField name="--ai" type="boolean" default="false">
+  Enable optional AI-powered schema refinement
+</ResponseField>
+
+<ResponseField name="--capture" type="string" default="full">
+  Capture mode: `basic` (in-page hooks only) or `full` (Playwright resource capture + in-page WebSockets)
+</ResponseField>
+
+### Examples
+
+<CodeGroup>
+```bash custom port
+# Run the dashboard on port 4444
+playcapture start https://example.com --port 4444
+```
+
+```bash headless mode
+# Run browser in headless mode
+playcapture start https://example.com --headless
+```
+
+```bash with AI
+# Enable AI-powered schema refinement
+playcapture start https://example.com --headless --ai
+```
+
+```bash all options
+# Combine multiple options
+playcapture start https://api.example.com --port 8080 --headless --ai
+```
+</CodeGroup>
+
+## What you'll see
+
+As you interact with the application, PlayCapture automatically:
+
+1. **Captures requests**: Intercepts all fetch, XMLHttpRequest, and WebSocket calls
+2. **Groups endpoints**: Recognizes patterns like `/users/123` and `/users/456` as `/users/{id}`
+3. **Infers schemas**: Analyzes JSON payloads to determine types and required fields
+4. **Detects authentication**: Identifies Bearer tokens, API keys, cookies, and CSRF patterns
+5. **Builds OpenAPI specs**: Generates OpenAPI 3.1 specifications incrementally
+
+## Troubleshooting
 
 <AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
+  <Accordion title="Dashboard won't load">
+    If the dashboard doesn't load at `http://localhost:3333`:
+
+    - Check that port 3333 is available (or use `--port` to specify a different port)
+    - Wait a few seconds for the server to start completely
+    - Check the terminal for error messages
+    - Ensure the CLI process is still running
   </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
+
+  <Accordion title="No requests appearing">
+    If you don't see requests in the dashboard:
+
+    - Verify the Playwright browser window opened successfully
+    - Check that you're interacting with the browser window that PlayCapture opened (not a different browser)
+    - Some apps may use WebSockets or other protocols that require `--capture full` mode
+    - Check the browser console for JavaScript errors
   </Accordion>
-</AccordionGroup>
 
-### Step 2: Deploy your changes
+  <Accordion title="WebSocket connection errors">
+    Initial console messages about WebSocket or HMR failures are usually transient during startup. The client auto-retries the capture WebSocket. Wait a few seconds and refresh the dashboard.
+  </Accordion>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+  <Accordion title="Binary responses not rendering">
+    Images and media files may not render if:
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
+    - The server didn't include a base64-encoded body
+    - CORS or authentication blocks loading the resource
+    - The response is too large to capture completely
   </Accordion>
 </AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="CLI options" icon="gear" href="/cli/options">
+    Customize PlayCapture's behavior and capture settings
+  </Card>
+  <Card title="API reference" icon="code" href="/api/capture-coordinator">
+    Learn about the core API and components
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

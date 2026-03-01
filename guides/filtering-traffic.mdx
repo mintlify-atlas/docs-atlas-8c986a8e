@@ -1,0 +1,296 @@
+---
+title: Filtering traffic
+description: Control which network requests are captured and processed by PlayCapture to focus on relevant API traffic.
+---
+
+PlayCapture automatically filters out common framework noise and internal requests to focus on relevant API traffic.
+
+## Automatic filtering
+
+PlayCapture applies intelligent filters by default to exclude:
+
+- Next.js internal routes (`/_next/`)
+- Static assets (`/static/`)
+- Source maps (`.map` files)
+- Hot module replacement (`.hot-update.js`)
+- Favicon requests (`/favicon.ico`)
+- Well-known paths (`/.well-known/`)
+- Next.js router prefetch requests
+- React Server Components (RSC) prefetch
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:23](../source/src/dev-tools/core/capture-coordinator.ts#L23)
+
+## Internal URL filtering
+
+The coordinator automatically detects and skips internal framework URLs:
+
+```typescript
+// From capture-coordinator.ts
+const _internalPathsRe = /(^\/_next\/|\/_next\/|\/static\/|\/favicon\.ico$|\.map$|\.hot-update\.js$|\.well-known\/)/i;
+
+function isInternalUrlLocal(url?: string | null) {
+  if (!url) return false;
+  try {
+    const u = new URL(url, 'http://localhost');
+    const path = (u.pathname || '') + (u.search || '');
+    return _internalPathsRe.test(path);
+  } catch {
+    return _internalPathsRe.test(String(url));
+  }
+}
+```
+
+This filtering happens before requests are stored or processed.
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:25](../source/src/dev-tools/core/capture-coordinator.ts#L25)
+
+## Header-based filtering
+
+PlayCapture filters requests based on specific headers:
+
+### Next.js router prefetch
+
+```typescript
+// From capture-coordinator.ts
+const lowerHeaders: Record<string, string> = {};
+Object.entries(request.headers || {}).forEach(([k, v]) => {
+  lowerHeaders[k.toLowerCase()] = String(v);
+});
+
+// Skip Next.js router prefetch requests
+if (lowerHeaders['next-router-prefetch'] || lowerHeaders['rsc']) {
+  return;
+}
+```
+
+Requests with these headers are automatically excluded:
+- `next-router-prefetch`: Next.js prefetch requests
+- `rsc`: React Server Component requests
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:139](../source/src/dev-tools/core/capture-coordinator.ts#L139)
+
+## Capture modes
+
+PlayCapture supports different capture modes:
+
+### Full capture mode
+
+When using Playwright or Chrome DevTools Protocol (CDP):
+
+```typescript
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+
+const coordinator = new CaptureCoordinator({
+  aiEnabled: false,
+  fullCapture: true
+});
+```
+
+In full capture mode:
+- Prefers Playwright/CDP events
+- Ignores injected script events to avoid duplicates
+- Captures complete resource information
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:76](../source/src/dev-tools/core/capture-coordinator.ts#L76)
+
+### Injected script mode
+
+Default mode using browser script injection:
+
+```typescript
+const coordinator = new CaptureCoordinator({
+  aiEnabled: false,
+  fullCapture: false
+});
+```
+
+This mode:
+- Captures requests via injected browser scripts
+- Works without browser automation tools
+- Lighter weight and easier to integrate
+
+## Event source filtering
+
+The coordinator checks the event source:
+
+```typescript
+// From capture-coordinator.ts
+handleNetworkEvent(event: any): void {
+  const { type, data, timestamp, source } = event;
+  
+  // If we're running in fullCapture mode, prefer Playwright-sourced events
+  // and ignore injected-page events (to avoid duplicates).
+  if (this.options.fullCapture && source === 'injected') {
+    return;
+  }
+  
+  // Process the event...
+}
+```
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:106](../source/src/dev-tools/core/capture-coordinator.ts#L106)
+
+## Embedding filters
+
+When AI features are enabled, additional filters apply for embeddings:
+
+<Steps>
+  <Step title="Check AI configuration">
+    ```typescript
+    const key = getApiKey() || process.env.AI_GATEWAY_API_KEY;
+    if (this.options.aiEnabled && key) {
+      // Proceed with embedding
+    }
+    ```
+  </Step>
+  
+  <Step title="Normalize headers">
+    ```typescript
+    const lowerHeaders: Record<string, string> = {};
+    Object.entries(request.headers || {}).forEach(([k, v]) => {
+      lowerHeaders[k.toLowerCase()] = String(v);
+    });
+    ```
+  </Step>
+  
+  <Step title="Filter internal requests">
+    ```typescript
+    const isInternal = Boolean(
+      lowerHeaders['next-router-prefetch'] || lowerHeaders['rsc']
+    );
+    ```
+  </Step>
+  
+  <Step title="Check URL patterns">
+    ```typescript
+    const isApiPath = typeof request.url === 'string' 
+      && request.url.includes('/api/');
+    const isExternal = /^https?:\/\//.test(String(request.url));
+    
+    if (!isInternal && (isApiPath || isExternal)) {
+      // Generate embedding
+    }
+    ```
+  </Step>
+</Steps>
+
+Embeddings are only generated for:
+- API paths containing `/api/`
+- External HTTPS/HTTP requests
+- Non-internal framework requests
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:226](../source/src/dev-tools/core/capture-coordinator.ts#L226)
+
+## Processing pipeline
+
+The filtering happens at multiple stages:
+
+```typescript
+private async processTransaction(transaction: NetworkTransaction): Promise<void> {
+  if (!transaction.response) return;
+  
+  const { request, response } = transaction;
+  
+  // Skip internal framework assets
+  if (isInternalUrlLocal(request.url)) return;
+  
+  // 1. Infer endpoint pattern
+  const endpoint = this.endpointEngine.inferEndpoint({
+    url: request.url,
+    method: request.method
+  });
+  
+  // 2. Infer schemas
+  const schemas = await this.schemaEngine.inferSchemas({
+    requestBody: request.body,
+    responseBody: response.body
+  });
+  
+  // 3. Update OpenAPI spec
+  this.openapiGenerator.addEndpoint({
+    endpoint,
+    method: request.method,
+    requestSchema: schemas.request,
+    responseSchema: schemas.response,
+    headers: request.headers,
+    statusCode: response.status
+  });
+}
+```
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:179](../source/src/dev-tools/core/capture-coordinator.ts#L179)
+
+## Custom filtering patterns
+
+While PlayCapture doesn't expose a direct API for custom filters, you can implement filtering by:
+
+### Filtering before capture
+
+```typescript
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+
+const coordinator = new CaptureCoordinator({ aiEnabled: false });
+
+// Wrap handleNetworkEvent with custom logic
+const originalHandler = coordinator.handleNetworkEvent.bind(coordinator);
+
+coordinator.handleNetworkEvent = (event: any) => {
+  // Custom filtering logic
+  if (shouldFilterEvent(event)) {
+    return;
+  }
+  
+  originalHandler(event);
+};
+
+function shouldFilterEvent(event: any): boolean {
+  // Add your custom filters here
+  return event.data?.url?.includes('/analytics/');
+}
+```
+
+### Filtering transactions
+
+```typescript
+const coordinator = new CaptureCoordinator({ aiEnabled: false });
+
+// Get only relevant transactions
+const transactions = coordinator.getTransactions().filter(t => {
+  return t.request.url.includes('/api/') && 
+         t.response?.status === 200;
+});
+```
+
+## WebSocket filtering
+
+WebSocket events are handled separately:
+
+```typescript
+// From capture-coordinator.ts
+switch (type) {
+  case 'request':
+    this.handleRequest({ ...data, timestamp });
+    break;
+  case 'response':
+    this.handleResponse(data);
+    break;
+  case 'websocket:send':
+  case 'websocket:receive':
+    this.handleWebSocket(type, data);
+    break;
+}
+```
+
+WebSocket messages are emitted as separate events and don't go through the same filtering pipeline.
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:115](../source/src/dev-tools/core/capture-coordinator.ts#L115)
+
+## Best practices
+
+<Tip>
+  The built-in filters are designed to exclude framework noise while capturing all relevant API traffic. In most cases, you won't need custom filtering.
+</Tip>
+
+<Warning>
+  Be careful when wrapping core methods like `handleNetworkEvent`. Improper filtering can cause legitimate requests to be missed.
+</Warning>

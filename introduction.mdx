@@ -1,0 +1,105 @@
+---
+title: Introduction
+description: Generate OpenAPI specifications automatically by capturing real browser interactions
+---
+
+<img
+  className="block rounded-lg"
+  src="https://github.com/user-attachments/assets/81b4c462-50f7-4c84-8ccc-cca6309fdd66"
+  alt="PlayCapture dashboard showing real-time network capture"
+/>
+
+## What is PlayCapture?
+
+PlayCapture is a local-first developer tool that uses a Playwright-controlled Chromium browser to capture and monitor network requests while you interact with your app. It infers API endpoints, detects auth schemes, generates JSON schemas from request/response samples, and builds OpenAPI 3.1 specifications with reproducible examples.
+
+Everything runs locally on your machine. No data leaves your computer unless you explicitly enable optional AI features.
+
+## How it works
+
+PlayCapture launches a Chromium browser and captures network traffic while you interact with your app. It then:
+
+<CardGroup cols={2}>
+  <Card title="Intercepts requests" icon="network-wired">
+    Captures fetch, XMLHttpRequest, and WebSocket calls in real-time
+  </Card>
+  <Card title="Infers endpoints" icon="route">
+    Groups similar paths into parameterized endpoints automatically
+  </Card>
+  <Card title="Detects authentication" icon="lock">
+    Recognizes Bearer tokens, API keys, cookies, and CSRF patterns
+  </Card>
+  <Card title="Generates schemas" icon="code">
+    Creates JSON schemas from request/response samples with types and required fields
+  </Card>
+</CardGroup>
+
+## Key features
+
+<AccordionGroup>
+  <Accordion title="Real-time capture">
+    Watch requests appear in the dashboard as you interact with your app. The dashboard streams live updates via WebSocket, showing you every API call with full request and response details.
+  </Accordion>
+
+  <Accordion title="Endpoint inference">
+    PlayCapture automatically groups similar paths into parameterized endpoints. For example, `/users/123` and `/users/456` become `/users/{id}` with proper path parameter detection.
+  </Accordion>
+
+  <Accordion title="Schema detection">
+    The schema inference engine analyzes JSON payloads to determine types, required fields, enums, and nested structures. Schemas are refined as more examples are captured.
+  </Accordion>
+
+  <Accordion title="Auth detection">
+    Automatically recognizes authentication schemes including Bearer tokens, API keys in headers or query parameters, cookies, and CSRF tokens.
+  </Accordion>
+
+  <Accordion title="OpenAPI 3.1 output">
+    Produces production-ready OpenAPI 3.1 specifications with all discovered endpoints, schemas, authentication schemes, and reproducible examples.
+  </Accordion>
+
+  <Accordion title="Export options">
+    Download your API documentation in multiple formats: OpenAPI JSON, OpenAPI YAML, Postman collections, and cURL commands for individual endpoints.
+  </Accordion>
+
+  <Accordion title="Local-first architecture">
+    All processing happens on your machine. No cloud dependencies by default, ensuring your API traffic stays private.
+  </Accordion>
+
+  <Accordion title="Optional AI refinement">
+    Opt-in AI features can refine schemas and improve field descriptions. Completely optional and disabled by default.
+  </Accordion>
+</AccordionGroup>
+
+## Architecture
+
+PlayCapture consists of several coordinated components:
+
+- **Browser launcher**: Manages Playwright Chromium instances
+- **Network capture engine**: Injected in-page hooks that intercept requests
+- **Endpoint inference engine**: Groups paths and detects parameters
+- **Schema inference engine**: Infers JSON schemas from payloads
+- **OpenAPI generator**: Builds specifications incrementally
+- **Dashboard server**: HTTP and WebSocket server for the real-time UI
+
+## Get started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Set up PlayCapture on your machine
+  </Card>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Capture your first API in minutes
+  </Card>
+</CardGroup>
+
+## Use cases
+
+<Note>
+  PlayCapture is ideal for developers who need to document existing APIs, reverse engineer third-party integrations, or generate OpenAPI specs from legacy applications.
+</Note>
+
+- **Document existing APIs**: Generate accurate OpenAPI specs from production traffic
+- **Reverse engineer integrations**: Understand third-party API behavior by observing real requests
+- **Legacy application documentation**: Create API docs for systems without existing specifications
+- **API testing**: Generate Postman collections or cURL commands for testing
+- **Schema validation**: Verify API responses match expected structures

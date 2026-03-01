@@ -1,0 +1,265 @@
+---
+title: CaptureCoordinator
+description: Central hub for network capture, inference, and OpenAPI generation
+---
+
+## Overview
+
+The `CaptureCoordinator` class is the central hub that receives normalized network events, maintains in-memory transactions, orchestrates inference engines (endpoint/schema/openapi), and emits updates to connected consumers.
+
+### Responsibilities
+
+- Normalize incoming events from multiple sources
+- Maintain request/response transactions
+- Run inference pipelines and update OpenAPI spec
+- Optionally produce embeddings for storage
+
+## Constructor
+
+```typescript
+new CaptureCoordinator(options: CaptureCoordinatorOptions)
+```
+
+<ParamField path="options" type="CaptureCoordinatorOptions" required>
+  Configuration options for the coordinator
+  
+  <ParamField path="options.aiEnabled" type="boolean" required>
+    Enable AI-powered schema refinement
+  </ParamField>
+  
+  <ParamField path="options.fullCapture" type="boolean">
+    When true, prefer Playwright/CDP full resource capture and ignore injected script events
+  </ParamField>
+</ParamField>
+
+## Methods
+
+### handleNetworkEvent
+
+Handle incoming network event from browser.
+
+```typescript
+handleNetworkEvent(event: any): void
+```
+
+<ParamField path="event" type="object" required>
+  Raw event from network capture script
+  
+  <ParamField path="event.type" type="string" required>
+    Event type: `"request"`, `"response"`, `"websocket:send"`, or `"websocket:receive"`
+  </ParamField>
+  
+  <ParamField path="event.data" type="any" required>
+    Event data (varies by type)
+  </ParamField>
+  
+  <ParamField path="event.timestamp" type="number" required>
+    Event timestamp in milliseconds
+  </ParamField>
+  
+  <ParamField path="event.source" type="string">
+    Event source: `"injected"` or `"playwright"`
+  </ParamField>
+</ParamField>
+
+**Example:**
+
+```typescript
+const coordinator = new CaptureCoordinator({
+  aiEnabled: true,
+  fullCapture: false
+});
+
+coordinator.handleNetworkEvent({
+  type: "request",
+  data: {
+    id: "req-123",
+    url: "https://api.example.com/users/42",
+    method: "GET",
+    headers: { "Authorization": "Bearer token" },
+    body: null
+  },
+  timestamp: Date.now(),
+  source: "playwright"
+});
+```
+
+### getTransactions
+
+Get all captured transactions.
+
+```typescript
+getTransactions(): NetworkTransaction[]
+```
+
+<ResponseField name="transactions" type="NetworkTransaction[]">
+  Array of all captured network transactions
+</ResponseField>
+
+**Example:**
+
+```typescript
+const transactions = coordinator.getTransactions();
+console.log(`Captured ${transactions.length} transactions`);
+```
+
+### getOpenAPISpec
+
+Get current OpenAPI specification.
+
+```typescript
+getOpenAPISpec(): any
+```
+
+<ResponseField name="spec" type="OpenAPISpec">
+  OpenAPI 3.1 specification object
+</ResponseField>
+
+**Example:**
+
+```typescript
+const spec = coordinator.getOpenAPISpec();
+console.log(spec.paths);
+```
+
+### exportSpec
+
+Export OpenAPI spec to file format.
+
+```typescript
+exportSpec(format: "json" | "yaml"): string
+```
+
+<ParamField path="format" type="string" required>
+  Export format: `"json"` or `"yaml"`
+</ParamField>
+
+<ResponseField name="spec" type="string">
+  Serialized OpenAPI specification
+</ResponseField>
+
+**Example:**
+
+```typescript
+const jsonSpec = coordinator.exportSpec("json");
+const yamlSpec = coordinator.exportSpec("yaml");
+
+fs.writeFileSync("openapi.json", jsonSpec);
+fs.writeFileSync("openapi.yaml", yamlSpec);
+```
+
+## Events
+
+The `CaptureCoordinator` extends `EventEmitter` and emits the following events:
+
+### request
+
+Emitted when a new request is captured.
+
+```typescript
+coordinator.on("request", (request: NetworkRequest) => {
+  console.log(`Request: ${request.method} ${request.url}`);
+});
+```
+
+### response
+
+Emitted when a response is captured.
+
+```typescript
+coordinator.on("response", (response: NetworkResponse) => {
+  console.log(`Response: ${response.status}`);
+});
+```
+
+### openapi:update
+
+Emitted when the OpenAPI specification is updated.
+
+```typescript
+coordinator.on("openapi:update", (spec: OpenAPISpec) => {
+  console.log(`Spec updated with ${Object.keys(spec.paths).length} paths`);
+});
+```
+
+### websocket
+
+Emitted for WebSocket events.
+
+```typescript
+coordinator.on("websocket", (event: { type: string; data: any }) => {
+  console.log(`WebSocket: ${event.type}`);
+});
+```
+
+## Interfaces
+
+### NetworkRequest
+
+Captured network request data.
+
+```typescript
+interface NetworkRequest {
+  id: string;
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body: any;
+  timestamp: number;
+}
+```
+
+### NetworkResponse
+
+Captured network response data.
+
+```typescript
+interface NetworkResponse {
+  id: string;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: any;
+  duration?: number;
+}
+```
+
+### NetworkTransaction
+
+Complete network transaction (request + response).
+
+```typescript
+interface NetworkTransaction {
+  request: NetworkRequest;
+  response: NetworkResponse | null;
+  completedAt: number | null;
+}
+```
+
+## Internal behavior
+
+### Request filtering
+
+The coordinator automatically filters out:
+
+- Next.js router prefetch requests (header: `next-router-prefetch`)
+- React Server Components requests (header: `rsc`)
+- Internal framework assets (`/_next`, `/static`, sourcemaps, etc.)
+
+### Inference pipeline
+
+When a transaction completes, the coordinator:
+
+1. Infers endpoint pattern using `EndpointInferenceEngine`
+2. Infers request/response schemas using `SchemaInferenceEngine`
+3. Updates OpenAPI spec using `OpenAPIGenerator`
+4. Emits `openapi:update` event
+5. Optionally creates embeddings for AI features (when `aiEnabled` is true)
+
+### Full capture mode
+
+When `fullCapture` is enabled, the coordinator:
+
+- Prefers Playwright/CDP-sourced events
+- Ignores injected-page events to avoid duplicates
+- Provides more complete network capture including binary resources

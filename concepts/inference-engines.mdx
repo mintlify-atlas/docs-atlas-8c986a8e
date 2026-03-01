@@ -1,0 +1,634 @@
+---
+title: Inference engines
+description: Discover how PlayCapture analyzes network traffic to automatically generate accurate OpenAPI specifications
+---
+
+PlayCapture uses three specialized inference engines to transform raw network traffic into structured OpenAPI specifications. Each engine focuses on a specific aspect of API analysis.
+
+## Engine overview
+
+<CardGroup cols={3}>
+  <Card title="Endpoint inference" icon="route" href="#endpoint-inference-engine">
+    Detects URL patterns and identifies path parameters
+  </Card>
+  <Card title="Schema inference" icon="brackets-curly" href="#schema-inference-engine">
+    Generates JSON schemas from request/response bodies
+  </Card>
+  <Card title="OpenAPI generation" icon="file-code" href="#openapi-generator">
+    Assembles complete OpenAPI 3.1 specifications
+  </Card>
+</CardGroup>
+
+## Endpoint inference engine
+
+**Location:** `src/dev-tools/core/endpoint-inference-engine.ts`
+
+This engine analyzes URL patterns across multiple requests to identify stable endpoint structures and detect variable path segments.
+
+### Pattern detection workflow
+
+<Steps>
+  <Step title="Parse URL">
+    Extract path segments and query parameters from the request URL
+  </Step>
+  <Step title="Group similar paths">
+    Cluster URLs with the same number of segments (structural similarity)
+  </Step>
+  <Step title="Detect variables">
+    Identify segments that vary across requests (IDs, UUIDs, slugs)
+  </Step>
+  <Step title="Generate pattern">
+    Replace variable segments with parameterized placeholders like `{id}`
+  </Step>
+</Steps>
+
+### URL parsing
+
+The engine parses URLs to extract components:
+
+```typescript
+// src/dev-tools/core/endpoint-inference-engine.ts:93
+private parseURL(url: string): ParsedURL {
+  try {
+    const urlObj = new URL(url);
+    const pathSegments = urlObj.pathname.split("/").filter(Boolean);
+    const queryParams: Record<string, string> = {};
+    
+    urlObj.searchParams.forEach((value, key) => {
+      queryParams[key] = value;
+    });
+    
+    return {
+      baseUrl: urlObj.origin,
+      path: urlObj.pathname,
+      pathSegments,
+      queryParams
+    };
+  } catch {
+    // Handle relative URLs gracefully
+  }
+}
+```
+
+### Parameter detection heuristics
+
+The engine uses pattern matching to identify path parameters:
+
+<Tabs>
+  <Tab title="Numeric IDs">
+    ```typescript
+    // Detects: /api/user/123, /api/user/456
+    if (values.every((v) => /^\d+$/.test(v))) return true;
+    ```
+    **Result:** `/api/user/{id}`
+  </Tab>
+  <Tab title="UUIDs">
+    ```typescript
+    // Detects: /api/order/550e8400-e29b-41d4-a716-446655440000
+    if (values.every((v) => 
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
+    )) {
+      return true;
+    }
+    ```
+    **Result:** `/api/order/{id}`
+  </Tab>
+  <Tab title="Alphanumeric slugs">
+    ```typescript
+    // Detects: /posts/my-first-post, /posts/hello-world
+    if (values.every((v) => /^[a-z0-9_-]+$/i.test(v) && v.length > 5)) {
+      return true;
+    }
+    ```
+    **Result:** `/posts/{param0}`
+  </Tab>
+</Tabs>
+
+### Pattern comparison algorithm
+
+For each position in the URL path, the engine compares values across all samples:
+
+```typescript
+// src/dev-tools/core/endpoint-inference-engine.ts:202
+for (let i = 0; i < segmentCount; i++) {
+  const values = segments.map((s) => s[i]);
+  const uniqueValues = new Set(values);
+  
+  if (uniqueValues.size === 1) {
+    // All same - keep as literal segment
+    pattern.push(values[0]);
+  } else if (this.looksLikeParameter(values)) {
+    // Variable - convert to parameter
+    const paramName = this.inferParameterName(values, i);
+    pattern.push(`{${paramName}}`);
+    params.push(paramName);
+  } else {
+    // Mixed - keep literal for now
+    pattern.push(values[0]);
+  }
+}
+```
+
+### Stability scoring
+
+Endpoints are assigned stability scores based on the ratio of literal to variable segments:
+
+```typescript
+const confidence = 1 - variableSegments / segmentCount;
+```
+
+- **1.0** - All segments are literal (e.g., `/api/users`)
+- **0.75** - One variable in 4 segments (e.g., `/api/users/{id}/profile`)
+- **0.5** - Half variable (e.g., `/api/{resource}/{id}`)
+
+<Note>
+  Higher stability scores indicate more reliable endpoint patterns. Patterns with very low stability may need manual review.
+</Note>
+
+### Query parameter tracking
+
+The engine accumulates all observed query parameters:
+
+```typescript
+// src/dev-tools/core/endpoint-inference-engine.ts:74
+Object.keys(parsed.queryParams).forEach((param) => {
+  endpoint!.queryParams.add(param);
+});
+```
+
+This builds a comprehensive set of possible query parameters for each endpoint.
+
+## Schema inference engine
+
+**Location:** `src/dev-tools/core/schema-inference-engine.ts`
+
+Generates JSON Schema-like structures by analyzing request and response bodies using deterministic heuristics and optional AI enhancement.
+
+### Inference strategy
+
+The engine uses recursive type detection:
+
+```typescript
+// src/dev-tools/core/schema-inference-engine.ts:103
+private inferSchema(value: any, context: string): JSONSchema | null {
+  if (value === null || value === undefined) {
+    return { type: "null", nullable: true };
+  }
+  
+  const valueType = typeof value;
+  
+  // Primitive types
+  if (valueType === "string") return { type: "string" };
+  if (valueType === "number") {
+    return { type: Number.isInteger(value) ? "integer" : "number" };
+  }
+  if (valueType === "boolean") return { type: "boolean" };
+  
+  // Complex types (arrays, objects)
+  // ...
+}
+```
+
+### Array schema merging
+
+For arrays, the engine samples the first 5 items and merges their schemas:
+
+```typescript
+// src/dev-tools/core/schema-inference-engine.ts:140
+if (Array.isArray(value)) {
+  if (value.length === 0) {
+    return { type: "array", items: { type: "object" } };
+  }
+  
+  const itemSchemas = value
+    .slice(0, 5)
+    .map((item) => this.inferSchema(item, context));
+  const mergedItemSchema = this.mergeSchemas(itemSchemas);
+  
+  return {
+    type: "array",
+    items: mergedItemSchema || { type: "object" }
+  };
+}
+```
+
+This handles heterogeneous arrays by finding the common schema structure.
+
+### Object property inference
+
+For objects, each property is recursively analyzed:
+
+```typescript
+// src/dev-tools/core/schema-inference-engine.ts:156
+Object.entries(value).forEach(([key, val]) => {
+  const fieldSchema = this.inferSchema(val, `${context}.${key}`);
+  if (fieldSchema) {
+    properties[key] = fieldSchema;
+    
+    // Track field statistics
+    this.updateFieldStats(`${context}.${key}`, val);
+    
+    // Mark as required if not null/undefined
+    if (val !== null && val !== undefined) {
+      required.push(key);
+    }
+  }
+});
+
+return {
+  type: "object",
+  properties,
+  required: required.length > 0 ? required : undefined
+};
+```
+
+### Field statistics tracking
+
+The engine maintains statistics for pattern detection:
+
+```typescript
+// src/dev-tools/core/schema-inference-engine.ts:240
+interface FieldStats {
+  types: Map<string, number>;     // Type frequency distribution
+  nullCount: number;               // How often field is null
+  totalCount: number;              // Total observations
+  values: Set<any>;               // Unique values (for enum detection)
+  nested?: Map<string, FieldStats>; // Nested object stats
+}
+```
+
+These statistics enable:
+- **Nullable detection** - Fields that are sometimes null
+- **Enum detection** - Fields with limited unique values
+- **Type consistency** - Detecting polymorphic fields
+
+### Schema merging algorithm
+
+When multiple samples are observed, schemas are merged:
+
+```typescript
+// src/dev-tools/core/schema-inference-engine.ts:184
+private mergeSchemas(schemas: (JSONSchema | null)[]): JSONSchema | null {
+  const validSchemas = schemas.filter((s): s is JSONSchema => s !== null);
+  if (validSchemas.length === 0) return null;
+  
+  // Find most common type
+  const types = validSchemas.map((s) => s.type);
+  const mostCommonType = this.mostCommon(types);
+  
+  const merged: JSONSchema = { type: mostCommonType };
+  
+  // If all objects, merge properties
+  if (mostCommonType === "object") {
+    const allProperties = new Map<string, JSONSchema[]>();
+    
+    validSchemas.forEach((schema) => {
+      if (schema.properties) {
+        Object.entries(schema.properties).forEach(([key, value]) => {
+          if (!allProperties.has(key)) {
+            allProperties.set(key, []);
+          }
+          allProperties.get(key)!.push(value);
+        });
+      }
+    });
+    
+    // Recursively merge each property
+    merged.properties = {};
+    allProperties.forEach((schemas, key) => {
+      const mergedProp = this.mergeSchemas(schemas);
+      if (mergedProp) {
+        merged.properties![key] = mergedProp;
+      }
+    });
+  }
+  
+  return merged;
+}
+```
+
+### AI-powered refinement
+
+When AI is enabled, schemas are enhanced using GPT-4o-mini:
+
+```typescript
+// src/dev-tools/core/schema-inference-engine.ts:290
+private async refineWithAI(schemas: InferredSchemas): Promise<InferredSchemas> {
+  const prompt = `You are a schema inference expert. Improve these schemas by:
+1. Detecting enums (if values are limited and repeated)
+2. Adding concise descriptions for fields
+3. Suggesting clearer field names where obvious
+4. Detecting patterns (email, URL, ISO date, UUID, etc)
+
+Request Schema:
+${JSON.stringify(schemas.request, null, 2)}
+
+Response Schema:
+${JSON.stringify(schemas.response, null, 2)}
+
+Return ONLY valid JSON with improved schemas.`;
+  
+  const { text } = await generateTextFromGateway({
+    model: "openai/gpt-4o-mini",
+    prompt
+  });
+  
+  const refined = JSON.parse(text);
+  return {
+    request: refined.request || schemas.request,
+    response: refined.response || schemas.response
+  };
+}
+```
+
+<Warning>
+  AI refinement can fail due to network issues or rate limits. The engine always falls back to deterministic schemas if AI refinement fails.
+</Warning>
+
+### JSON string parsing
+
+The engine attempts to parse JSON strings when content-type headers are missing:
+
+```typescript
+const trimmed = (value as string).trim();
+if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+  try {
+    const parsed = JSON.parse(trimmed);
+    return this.inferSchema(parsed, context);
+  } catch {
+    // Not JSON, treat as string
+  }
+}
+```
+
+This handles cases where APIs return JSON without proper headers.
+
+## OpenAPI generator
+
+**Location:** `src/dev-tools/core/openapi-generator.ts`
+
+Assembles the complete OpenAPI 3.1 specification from inferred endpoints and schemas.
+
+### Specification initialization
+
+```typescript
+// src/dev-tools/core/openapi-generator.ts:104
+this.spec = {
+  openapi: "3.1.0",
+  info: {
+    title: "Captured API",
+    version: "1.0.0",
+    description: "API specification generated by observing real browser traffic"
+  },
+  paths: {},
+  components: {
+    schemas: {},
+    securitySchemes: {}
+  }
+};
+```
+
+### Endpoint addition
+
+When a new transaction is processed:
+
+```typescript
+// src/dev-tools/core/openapi-generator.ts:125
+addEndpoint(input: AddEndpointInput): void {
+  const { endpoint, method, requestSchema, responseSchema, headers, statusCode } = input;
+  
+  // Initialize path if new
+  if (!this.spec.paths[endpoint.pattern]) {
+    this.spec.paths[endpoint.pattern] = {};
+  }
+  
+  const path = this.spec.paths[endpoint.pattern];
+  const methodLower = method.toLowerCase();
+  
+  // Create operation
+  if (!path[methodLower]) {
+    path[methodLower] = {
+      summary: this.generateSummary(endpoint.pattern, method),
+      operationId: this.generateOperationId(endpoint.pattern, method),
+      parameters: [],
+      responses: {}
+    };
+  }
+  
+  // Add parameters, request body, responses...
+}
+```
+
+### Parameter generation
+
+<Accordion title="Path parameters">
+  ```typescript
+  endpoint.pathParams.forEach((param) => {
+    if (!operation.parameters?.some((p) => p.name === param && p.in === "path")) {
+      operation.parameters.push({
+        name: param,
+        in: "path",
+        required: true,
+        schema: { type: "string" }
+      });
+    }
+  });
+  ```
+</Accordion>
+
+<Accordion title="Query parameters">
+  ```typescript
+  endpoint.queryParams.forEach((param) => {
+    if (!operation.parameters?.some((p) => p.name === param && p.in === "query")) {
+      operation.parameters.push({
+        name: param,
+        in: "query",
+        required: false,
+        schema: { type: "string" }
+      });
+    }
+  });
+  ```
+</Accordion>
+
+### Request body generation
+
+For methods that typically include bodies:
+
+```typescript
+// src/dev-tools/core/openapi-generator.ts:186
+if (requestSchema && method !== "GET" && method !== "DELETE") {
+  operation.requestBody = {
+    required: true,
+    content: {
+      "application/json": {
+        schema: requestSchema
+      }
+    }
+  };
+}
+```
+
+### Response generation
+
+```typescript
+// src/dev-tools/core/openapi-generator.ts:199
+const statusCodeStr = String(statusCode);
+if (!operation.responses[statusCodeStr]) {
+  operation.responses[statusCodeStr] = {
+    description: this.getStatusDescription(statusCode)
+  };
+}
+
+if (responseSchema) {
+  operation.responses[statusCodeStr].content = {
+    "application/json": {
+      schema: responseSchema
+    }
+  };
+}
+```
+
+### Security scheme detection
+
+The generator automatically detects authentication patterns:
+
+<CardGroup cols={3}>
+  <Card title="Bearer tokens">
+    ```typescript
+    if (authHeader.toLowerCase().startsWith("bearer ")) {
+      this.spec.components.securitySchemes.bearerAuth = {
+        type: "http",
+        scheme: "bearer",
+        bearerFormat: "JWT"
+      };
+      operation.security = [{ bearerAuth: [] }];
+    }
+    ```
+  </Card>
+  <Card title="Basic auth">
+    ```typescript
+    if (authHeader.toLowerCase().startsWith("basic ")) {
+      this.spec.components.securitySchemes.basicAuth = {
+        type: "http",
+        scheme: "basic"
+      };
+      operation.security = [{ basicAuth: [] }];
+    }
+    ```
+  </Card>
+  <Card title="API keys">
+    ```typescript
+    const apiKeyHeaders = ["x-api-key", "api-key", "apikey"];
+    apiKeyHeaders.forEach((headerName) => {
+      if (headers[headerName]) {
+        const schemeName = `apiKey_${headerName.replace(/-/g, "_")}`;
+        this.spec.components.securitySchemes[schemeName] = {
+          type: "apiKey",
+          in: "header",
+          name: headerName
+        };
+      }
+    });
+    ```
+  </Card>
+</CardGroup>
+
+### Operation ID generation
+
+Generates developer-friendly operation IDs:
+
+```typescript
+// src/dev-tools/core/openapi-generator.ts:288
+private generateOperationId(path: string, method: string): string {
+  const segments = path
+    .split("/")
+    .filter(Boolean)
+    .map((s) => s.replace(/[{}]/g, ""))  // Remove parameter braces
+    .map((s) => s.charAt(0).toUpperCase() + s.slice(1)); // Capitalize
+  
+  return `${method.toLowerCase()}${segments.join("")}`;
+}
+```
+
+**Examples:**
+- `GET /api/users/{id}` → `getUsersId`
+- `POST /api/orders` → `postOrders`
+- `DELETE /api/products/{productId}` → `deleteProductsProductId`
+
+### Export formats
+
+The generator supports both JSON and YAML export:
+
+```typescript
+// src/dev-tools/core/openapi-generator.ts:326
+export(format: "json" | "yaml"): string {
+  if (format === "yaml") {
+    return yamlStringify(this.spec);
+  }
+  return JSON.stringify(this.spec, null, 2);
+}
+```
+
+## Inference pipeline integration
+
+The three engines work together in sequence:
+
+```typescript
+// src/dev-tools/core/capture-coordinator.ts:188
+private async processTransaction(transaction: NetworkTransaction): Promise<void> {
+  // 1. Infer endpoint pattern
+  const endpoint = this.endpointEngine.inferEndpoint({
+    url: request.url,
+    method: request.method
+  });
+  
+  // 2. Infer schemas
+  const schemas = await this.schemaEngine.inferSchemas({
+    requestBody: request.body,
+    responseBody: response.body,
+    contentType: response.headers["content-type"]
+  });
+  
+  // 3. Update OpenAPI spec
+  this.openapiGenerator.addEndpoint({
+    endpoint,
+    method: request.method,
+    requestSchema: schemas.request,
+    responseSchema: schemas.response,
+    headers: request.headers,
+    statusCode: response.status
+  });
+  
+  // 4. Broadcast updated spec
+  this.emit("openapi:update", this.openapiGenerator.getSpec());
+}
+```
+
+## Performance optimizations
+
+<CardGroup cols={2}>
+  <Card title="Periodic pattern analysis" icon="clock">
+    Endpoint pattern detection runs every 10 requests instead of on every request to reduce overhead
+  </Card>
+  <Card title="Schema caching" icon="database">
+    Field statistics are accumulated over time, avoiding repeated analysis of identical structures
+  </Card>
+  <Card title="Array sampling" icon="list">
+    Only the first 5 array items are analyzed to prevent performance degradation on large arrays
+  </Card>
+  <Card title="Enum value limits" icon="hashtag">
+    Unique values for enum detection are capped at 20 to prevent memory bloat
+  </Card>
+</CardGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="How it works" icon="gears" href="/concepts/how-it-works">
+    See how the inference engines fit into the overall capture workflow
+  </Card>
+  <Card title="Network capture" icon="network-wired" href="/concepts/network-capture">
+    Learn how network traffic is captured before inference begins
+  </Card>
+</CardGroup>

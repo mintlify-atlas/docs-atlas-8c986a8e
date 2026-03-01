@@ -1,0 +1,310 @@
+---
+title: AI features
+description: Enable AI-powered schema refinement, semantic search, and intelligent field detection in your captured API specifications.
+---
+
+PlayCapture includes optional AI features that enhance schema inference and enable semantic search over captured traffic.
+
+## Configuration
+
+### Set up API key
+
+AI features require an API key for the AI Gateway. You can configure it in two ways:
+
+<Tabs>
+  <Tab title="Environment variable">
+    ```bash
+    export AI_GATEWAY_API_KEY=your-api-key-here
+    ```
+    
+    The API key is read from `process.env.AI_GATEWAY_API_KEY` automatically.
+  </Tab>
+  
+  <Tab title="Runtime configuration">
+    ```typescript
+    import { setApiKey } from '@/dev-tools/core/ai-gateway';
+    
+    // Set API key at runtime (in-memory only)
+    setApiKey('your-api-key-here');
+    ```
+    
+    This stores the key in memory without writing to disk.
+  </Tab>
+</Tabs>
+
+Reference: [src/dev-tools/core/ai-gateway.ts:33](../source/src/dev-tools/core/ai-gateway.ts#L33)
+
+### Enable AI features
+
+<Steps>
+  <Step title="Configure the coordinator">
+    ```typescript
+    import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+    
+    const coordinator = new CaptureCoordinator({
+      aiEnabled: true
+    });
+    ```
+    
+    Setting `aiEnabled: true` enables:
+    - AI-powered schema refinement
+    - Automatic embeddings generation
+    - Semantic search capabilities
+  </Step>
+  
+  <Step title="Verify API key">
+    ```typescript
+    import { getApiKey } from '@/dev-tools/core/ai-gateway';
+    
+    const key = getApiKey();
+    if (!key) {
+      console.error('AI features require an API key');
+    }
+    ```
+  </Step>
+</Steps>
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:73](../source/src/dev-tools/core/capture-coordinator.ts#L73)
+
+## AI schema refinement
+
+When AI is enabled, captured schemas are automatically refined to detect patterns and add descriptions.
+
+### What gets refined
+
+The AI model enhances schemas by:
+
+1. **Detecting enums**: Identifies fields with limited repeated values
+2. **Adding descriptions**: Generates concise field descriptions
+3. **Pattern detection**: Recognizes emails, URLs, ISO dates, UUIDs
+4. **Field naming**: Suggests clearer names where obvious
+
+### How it works
+
+The schema inference engine sends inferred schemas to the AI model for refinement:
+
+```typescript
+import { SchemaInferenceEngine } from '@/dev-tools/core/schema-inference-engine';
+
+const engine = new SchemaInferenceEngine({ aiEnabled: true });
+
+const schemas = await engine.inferSchemas({
+  requestBody: { email: 'user@example.com' },
+  responseBody: { id: '123e4567-e89b-12d3-a456-426614174000' }
+});
+```
+
+Reference: [src/dev-tools/core/schema-inference-engine.ts:85](../source/src/dev-tools/core/schema-inference-engine.ts#L85)
+
+### Refinement process
+
+The AI refinement happens automatically during capture:
+
+```typescript
+// From schema-inference-engine.ts
+private async refineWithAI(schemas: InferredSchemas): Promise<InferredSchemas> {
+  const prompt = `You are a schema inference expert. Given these inferred JSON schemas, improve them by:
+1. Detecting enums (if values are limited and repeated)
+2. Adding concise descriptions for fields
+3. Suggesting clearer field names where obvious
+4. Detecting patterns (email, URL, ISO date, UUID, etc)`;
+  
+  const { text } = await generateTextFromGateway({
+    model: 'openai/gpt-4o-mini',
+    prompt
+  });
+  
+  return JSON.parse(text);
+}
+```
+
+Reference: [src/dev-tools/core/schema-inference-engine.ts:290](../source/src/dev-tools/core/schema-inference-engine.ts#L290)
+
+### Example refinement
+
+Before AI refinement:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "email": { "type": "string" },
+    "status": { "type": "string" }
+  }
+}
+```
+
+After AI refinement:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "format": "email",
+      "description": "User email address"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["active", "inactive", "pending"],
+      "description": "Account status"
+    }
+  }
+}
+```
+
+## Semantic search
+
+When AI is enabled, PlayCapture automatically generates embeddings for captured traffic, enabling semantic search.
+
+### Automatic embeddings
+
+Embeddings are generated automatically for API requests:
+
+```typescript
+// From capture-coordinator.ts
+if (this.options.aiEnabled && key) {
+  const text = `${request.method} ${request.url}\n\nRequest:\n${
+    JSON.stringify(request.body || {})
+  }\n\nResponse:\n${
+    JSON.stringify(response.body || {})
+  }`;
+  
+  const vector = await embed(text);
+  addEmbeddings([{
+    id: request.id,
+    vector,
+    text,
+    metadata: {
+      url: request.url,
+      method: request.method,
+      status: response.status
+    }
+  }]);
+}
+```
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:236](../source/src/dev-tools/core/capture-coordinator.ts#L236)
+
+### Embedding models
+
+PlayCapture uses the AI SDK for embeddings:
+
+```typescript
+import { embed, embedMany } from '@/dev-tools/core/ai-gateway';
+
+// Single embedding
+const vector = await embed(
+  'POST /api/users - Create new user',
+  'openai/text-embedding-3-small'
+);
+
+// Batch embeddings
+const vectors = await embedMany(
+  ['GET /api/users', 'POST /api/users', 'DELETE /api/users/{id}'],
+  'openai/text-embedding-3-small'
+);
+```
+
+Reference: [src/dev-tools/core/ai-gateway.ts:124](../source/src/dev-tools/core/ai-gateway.ts#L124)
+
+### Search filtering
+
+Embeddings are only generated for relevant traffic:
+
+- API paths (containing `/api/`)
+- External HTTPS/HTTP requests
+- Excludes internal Next.js router requests
+- Excludes RSC prefetch requests
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:230](../source/src/dev-tools/core/capture-coordinator.ts#L230)
+
+## Text generation
+
+The AI gateway provides text generation capabilities:
+
+```typescript
+import { generateText, streamText } from '@/dev-tools/core/ai-gateway';
+
+// Synchronous generation
+const result = await generateText({
+  model: 'openai/gpt-4o-mini',
+  prompt: 'Explain this API endpoint',
+  headers: { 'X-Custom-Header': 'value' }
+});
+
+console.log(result.text);
+```
+
+Reference: [src/dev-tools/core/ai-gateway.ts:75](../source/src/dev-tools/core/ai-gateway.ts#L75)
+
+### Streaming responses
+
+For long-running generation tasks:
+
+```typescript
+import { streamText } from '@/dev-tools/core/ai-gateway';
+
+const stream = streamText({
+  model: 'openai/gpt-4o-mini',
+  prompt: 'Generate API documentation'
+});
+
+for await (const part of stream.textStream) {
+  process.stdout.write(part);
+}
+```
+
+Reference: [src/dev-tools/core/ai-gateway.ts:102](../source/src/dev-tools/core/ai-gateway.ts#L102)
+
+## Managing API keys
+
+### Clear API key
+
+Remove the API key from memory:
+
+```typescript
+import { clearApiKey } from '@/dev-tools/core/ai-gateway';
+
+clearApiKey();
+```
+
+This removes both the in-memory key and environment variable.
+
+Reference: [src/dev-tools/core/ai-gateway.ts:115](../source/src/dev-tools/core/ai-gateway.ts#L115)
+
+### Check if configured
+
+```typescript
+import { getApiKey } from '@/dev-tools/core/ai-gateway';
+
+if (getApiKey()) {
+  console.log('AI features are available');
+} else {
+  console.log('Configure AI_GATEWAY_API_KEY to enable AI features');
+}
+```
+
+## Error handling
+
+AI operations are designed to fail gracefully:
+
+```typescript
+// From schema-inference-engine.ts
+try {
+  const refined = await refineWithAI(schemas);
+  return refined;
+} catch (error) {
+  // If AI fails, return original schemas
+  console.error('AI refinement failed:', error);
+  return schemas;
+}
+```
+
+If AI features fail:
+- Schema refinement falls back to deterministic inference
+- Embeddings generation errors are logged but don't break capture
+- The capture pipeline continues normally
+
+Reference: [src/dev-tools/core/schema-inference-engine.ts:323](../source/src/dev-tools/core/schema-inference-engine.ts#L323)

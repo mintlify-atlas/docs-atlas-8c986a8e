@@ -1,0 +1,257 @@
+---
+title: Common issues
+description: Solutions to frequently encountered problems in PlayCapture
+---
+
+This page covers the most common issues you might encounter when using PlayCapture and how to resolve them.
+
+## WebSocket connection issues
+
+<Accordion title="Dashboard shows 'disconnected' status">
+  The dashboard uses a WebSocket connection to receive live network traffic. If you see a disconnected status:
+
+  **Solution:**
+  1. Wait 5-10 seconds for the auto-retry mechanism to reconnect
+  2. Refresh the dashboard page in your browser
+  3. Verify the CLI process is still running in your terminal
+
+  The WebSocket client automatically retries with exponential backoff (up to 30 seconds between attempts). Initial connection failures during startup are normal and will resolve once the dashboard server is fully initialized.
+</Accordion>
+
+<Accordion title="Console shows WebSocket or HMR errors on startup">
+  You may see errors like `WebSocket connection failed` or `/_next/webpack-hmr` errors in the browser console during the first few seconds after starting PlayCapture.
+
+  **Solution:**
+  This is expected behavior during startup. The dashboard client attempts to connect before the server is fully ready. The client includes retry logic that will automatically establish the connection within a few seconds.
+
+  <Note>
+    The WebSocket retry logic is implemented in `src/hooks/use-network-capture.ts:71-81` with exponential backoff up to 30 seconds.
+  </Note>
+</Accordion>
+
+<Accordion title="No requests appear in the dashboard">
+  If the dashboard loads but shows no network traffic:
+
+  **Check:**
+  1. Verify the WebSocket connection shows as "connected" in the dashboard
+  2. Interact with the Playwright browser window (not your regular browser)
+  3. Check that you're making HTTP requests in the Playwright browser
+  4. Verify the target application is loading correctly
+
+  **Solution:**
+  Internal URLs like `/_next/*` are filtered out by default. If you're testing a Next.js app, make sure to interact with your API endpoints, not just load pages.
+</Accordion>
+
+## Port conflicts
+
+<Accordion title="Error: Port 3333 already in use">
+  The default dashboard port (3333) may already be occupied by another application.
+
+  **Solution:**
+  Use the `--port` option to specify a different port:
+
+  ```bash
+  playcapture start https://example.com --port 4444
+  ```
+
+  Or in development mode:
+
+  ```bash
+  pnpm run cli start https://example.com -- --port 4444
+  ```
+
+  <Warning>
+    Make sure to access the dashboard at the new port (e.g., `http://localhost:4444`).
+  </Warning>
+</Accordion>
+
+<Accordion title="Dashboard won't start - 'failed to render Next.js'">
+  If you see errors about Next.js failing to render:
+
+  **Solution:**
+  1. Ensure all dependencies are installed: `pnpm install`
+  2. Clear Next.js cache: `rm -rf .next`
+  3. Check for port conflicts on the specified port
+  4. Verify Node.js version is compatible (Node 18+ recommended)
+</Accordion>
+
+## Playwright browser issues
+
+<Accordion title="Error: Playwright browsers not installed">
+  If you see an error about missing Playwright browsers:
+
+  **Solution:**
+  Install Playwright browsers using:
+
+  ```bash
+  npx playwright install
+  ```
+
+  This downloads the Chromium browser required for network capture.
+
+  <Note>
+    Playwright browsers are separate from your system browsers. The installation is required even if you have Chrome installed.
+  </Note>
+</Accordion>
+
+<Accordion title="Browser crashes or fails to launch">
+  The Playwright browser may fail to launch due to missing system dependencies.
+
+  **Solution:**
+  Install system dependencies:
+
+  ```bash
+  # Ubuntu/Debian
+  npx playwright install-deps
+
+  # macOS
+  # Usually no additional deps needed
+
+  # Windows
+  # Usually no additional deps needed
+  ```
+
+  Alternatively, try running in headless mode to reduce resource usage:
+
+  ```bash
+  playcapture start https://example.com --headless
+  ```
+</Accordion>
+
+<Accordion title="Browser window opens but shows blank page">
+  The target URL may not be loading correctly.
+
+  **Check:**
+  1. Verify the URL is correct and accessible
+  2. Check if the site requires authentication
+  3. Look for JavaScript errors in the Playwright browser console
+  4. Ensure the site doesn't block automation (some sites detect Playwright)
+
+  **Solution:**
+  PlayCapture disables the `AutomationControlled` flag, but some sites may still detect automation. Try:
+  - Using a different user agent
+  - Logging in manually in the Playwright window
+  - Checking the CLI output for errors
+</Accordion>
+
+## Installation and build issues
+
+<Accordion title="TypeScript compilation errors">
+  If you encounter TypeScript errors when building:
+
+  **Solution:**
+  1. Ensure you're using TypeScript 5.0+: `pnpm add -D typescript@latest`
+  2. Clear build artifacts: `rm -rf dist`
+  3. Rebuild: `pnpm run build:cli`
+
+  <Note>
+    Development mode uses `ts-node` and doesn't require building. Use `pnpm run cli start <url>` for development.
+  </Note>
+</Accordion>
+
+<Accordion title="Command 'playcapture' not found">
+  If the `playcapture` command isn't available after installation:
+
+  **Solution:**
+  1. Run `npm link` in the PlayCapture directory to create the global symlink
+  2. Or use the development command: `pnpm run cli start <url>`
+  3. Verify your PATH includes npm global bin directory
+
+  To check npm's global bin location:
+
+  ```bash
+  npm bin -g
+  ```
+</Accordion>
+
+## Data capture issues
+
+<Accordion title="Binary responses not displaying correctly">
+  Images, PDFs, and other binary files may not render in the dashboard.
+
+  **Why this happens:**
+  Binary responses require base64 encoding and proper CORS headers. If the server doesn't include these or blocks the resource, it won't display.
+
+  **Solution:**
+  This is expected for many binary resources. The request metadata (URL, headers, status) is still captured and included in the OpenAPI spec. The response body may be omitted or shown as base64.
+</Accordion>
+
+<Accordion title="Request/response body is null or empty">
+  Some requests may show empty bodies in the dashboard.
+
+  **Common causes:**
+  1. GET requests (no request body)
+  2. 204 No Content responses (no response body)
+  3. Binary content that couldn't be decoded
+  4. CORS restrictions preventing body access
+
+  **Solution:**
+  Check the request method and response status. Empty bodies are normal for certain HTTP patterns.
+</Accordion>
+
+## Performance issues
+
+<Accordion title="Dashboard becomes slow with many requests">
+  The dashboard UI may slow down after capturing hundreds of requests.
+
+  **Solution:**
+  1. Use filters in the dashboard to reduce displayed requests
+  2. Restart the capture session to clear the transaction list
+  3. Export your OpenAPI spec before the list becomes too large
+
+  The in-memory storage grows with each request. For long capture sessions, periodically export and restart.
+</Accordion>
+
+<Accordion title="High memory usage">
+  Memory usage increases with the number of captured transactions.
+
+  **Solution:**
+  1. Use the `--headless` flag to reduce browser overhead
+  2. Close the Playwright browser when not actively capturing
+  3. Restart the capture process periodically
+  4. Filter out unnecessary traffic by interacting only with relevant endpoints
+</Accordion>
+
+## Process management
+
+<Accordion title="Process doesn't shut down cleanly">
+  Sometimes PlayCapture doesn't respond to Ctrl+C.
+
+  **Solution:**
+  The CLI includes graceful shutdown handlers for SIGINT and SIGTERM. If it hangs:
+
+  1. Press Ctrl+C again after waiting a few seconds
+  2. Use Ctrl+Z to suspend, then `kill %1`
+  3. Find the process: `ps aux | grep playcapture` and kill it manually
+
+  <Note>
+    The shutdown process closes the browser, context, page, and HTTP server in sequence. This is implemented in `src/dev-tools/cli.ts:104-129`.
+  </Note>
+</Accordion>
+
+<Accordion title="Orphaned browser processes after crash">
+  If PlayCapture crashes, Playwright browser processes may remain running.
+
+  **Solution:**
+  Find and kill orphaned Chromium processes:
+
+  ```bash
+  # macOS/Linux
+  pkill -f "chrome.*playwright"
+
+  # Or manually
+  ps aux | grep chromium
+  kill <PID>
+  ```
+
+  On Windows, use Task Manager to end `chromium.exe` processes.
+</Accordion>
+
+## Still having issues?
+
+If you encounter problems not covered here:
+
+1. Check the [debugging guide](/troubleshooting/debugging) for diagnostic steps
+2. Review the CLI output for error messages
+3. Check the browser console in the dashboard for client-side errors
+4. Report issues at [GitHub Issues](https://github.com/BankkRoll/PlayCapture/issues)

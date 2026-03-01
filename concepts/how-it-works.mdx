@@ -1,0 +1,161 @@
+---
+title: How it works
+description: Understand how PlayCapture captures network traffic and generates OpenAPI specifications
+---
+
+PlayCapture uses a multi-stage pipeline to capture real network traffic from your browser and automatically infer OpenAPI specifications. This page explains the complete workflow from traffic capture to spec generation.
+
+## Overview
+
+The capture process follows four distinct stages:
+
+<Steps>
+  <Step title="Network capture">
+    Browser traffic is intercepted using injected JavaScript hooks and Playwright CDP
+  </Step>
+  <Step title="Event coordination">
+    Raw network events are normalized and matched into request/response pairs
+  </Step>
+  <Step title="Schema inference">
+    Request and response bodies are analyzed to generate JSON schemas
+  </Step>
+  <Step title="OpenAPI generation">
+    Inferred endpoints and schemas are assembled into a complete OpenAPI 3.1 spec
+  </Step>
+</Steps>
+
+## Capture workflow
+
+PlayCapture combines two complementary capture methods to ensure comprehensive coverage:
+
+### Injected script capture
+
+A lightweight JavaScript snippet runs in your browser's page context, intercepting:
+
+- `fetch()` API calls
+- `XMLHttpRequest` operations
+- WebSocket connections
+
+The injected script wraps these native APIs and emits structured events via `console.log()` with the `[API_INSPECT]` prefix. These events are parsed by the host process.
+
+<Note>
+  The injected script is defined in `src/dev-tools/core/network-capture-script.ts` and executes before page load using Playwright's `addInitScript()`.
+</Note>
+
+### Playwright resource capture
+
+When full capture mode is enabled, PlayCapture also uses Playwright's native request/response events:
+
+```typescript
+this.page.on("request", (req) => {
+  const requestData = {
+    id: generateId(),
+    url: req.url(),
+    method: req.method(),
+    headers: req.headers(),
+    body: req.postData(),
+    resourceType: req.resourceType()
+  };
+  coordinator.handleNetworkEvent({ type: "request", data: requestData });
+});
+```
+
+This captures all resource types including documents, scripts, images, and more.
+
+<Warning>
+  When full capture is enabled, injected script events are ignored to avoid duplicates. The coordinator checks `event.source` to filter appropriately.
+</Warning>
+
+## Event processing pipeline
+
+Once captured, events flow through the `CaptureCoordinator` (see `src/dev-tools/core/capture-coordinator.ts:106`):
+
+<CardGroup cols={2}>
+  <Card title="Request handling" icon="arrow-right">
+    Requests are stored in an in-memory transaction map and filtered to exclude internal Next.js routes and static assets
+  </Card>
+  <Card title="Response matching" icon="arrows-left-right-to-line">
+    Responses are matched to their requests by ID, completing the transaction
+  </Card>
+  <Card title="Inference trigger" icon="brain">
+    Complete transactions trigger the inference pipeline to extract endpoint patterns and schemas
+  </Card>
+  <Card title="Spec update" icon="file-code">
+    The OpenAPI generator updates the specification and broadcasts changes to connected clients
+  </Card>
+</CardGroup>
+
+### Filtering internal traffic
+
+PlayCapture automatically excludes framework noise:
+
+```typescript
+const _internalPathsRe = /(^\\_next\\/|\\_next\\/|\/static\\/|\/favicon\\.ico$|\\.map$|\\.hot-update\\.js$|\\.well-known\\/)/i;
+
+// Skip Next.js router prefetch and RSC requests
+if (lowerHeaders["next-router-prefetch"] || lowerHeaders["rsc"]) {
+  return;
+}
+```
+
+This ensures your OpenAPI spec only contains actual API endpoints, not build artifacts.
+
+## Inference engines
+
+Three specialized inference engines work in parallel:
+
+### Endpoint inference engine
+
+Detects endpoint patterns by analyzing URL structures across multiple requests:
+
+- Groups similar paths by segment count
+- Identifies variable segments (IDs, UUIDs)
+- Replaces variables with path parameters like `{id}`
+
+**Example:** `/api/user/123` and `/api/user/456` become `/api/user/{id}`
+
+### Schema inference engine
+
+Builds JSON schemas from observed request/response bodies:
+
+- Detects primitive types (string, number, boolean)
+- Merges nested objects and arrays
+- Tracks required vs optional fields
+- Optionally refines schemas using AI
+
+### OpenAPI generator
+
+Assembles the complete OpenAPI 3.1 specification:
+
+- Creates path items and operations
+- Adds path and query parameters
+- Includes request/response schemas
+- Detects security schemes from headers
+
+See [Architecture](/concepts/architecture) for detailed component interactions.
+
+## AI-powered refinement
+
+When AI features are enabled, schemas are enhanced with:
+
+- Enum detection for repeated values
+- Field descriptions
+- Pattern detection (email, URL, ISO dates)
+- Clearer field naming suggestions
+
+The refinement uses the AI Gateway (see `src/dev-tools/core/ai-gateway.ts`) and falls back to basic schemas if unavailable.
+
+<Note>
+  AI refinement is invoked at `src/dev-tools/core/schema-inference-engine.ts:290` using GPT-4o-mini by default.
+</Note>
+
+## Real-time updates
+
+As you interact with your application, the OpenAPI spec updates in real-time:
+
+1. Each completed transaction triggers inference
+2. The `CaptureCoordinator` emits `openapi:update` events (see line 213)
+3. Connected dashboards receive the updated spec
+4. Changes appear instantly in the UI
+
+This live feedback loop lets you explore your API and watch the spec evolve as you browse.

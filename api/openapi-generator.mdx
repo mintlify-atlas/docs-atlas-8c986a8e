@@ -1,0 +1,483 @@
+---
+title: OpenAPIGenerator
+description: Generates and maintains OpenAPI 3.1 specifications from captured traffic
+---
+
+## Overview
+
+The `OpenAPIGenerator` maintains an OpenAPI 3.1 specification constructed from observed endpoint patterns and inferred request/response schemas. It supports exporting to JSON and YAML formats.
+
+### Features
+
+- Builds OpenAPI 3.1 specification from captured traffic
+- Detects path and query parameters
+- Infers request/response schemas
+- Auto-detects security schemes (Bearer, Basic, API Key)
+- Supports JSON and YAML export formats
+
+## Constructor
+
+```typescript
+new OpenAPIGenerator()
+```
+
+No configuration options required. Initializes with a default OpenAPI 3.1 structure.
+
+## Methods
+
+### addEndpoint
+
+Add or update an endpoint in the specification.
+
+```typescript
+addEndpoint(input: AddEndpointInput): void
+```
+
+<ParamField path="input" type="AddEndpointInput" required>
+  Endpoint data with schemas
+  
+  <ParamField path="input.endpoint" type="object" required>
+    Inferred endpoint information
+    
+    <ParamField path="input.endpoint.pattern" type="string" required>
+      Endpoint pattern (e.g., `/api/users/{id}`)
+    </ParamField>
+    
+    <ParamField path="input.endpoint.pathParams" type="string[]" required>
+      Detected path parameter names
+    </ParamField>
+    
+    <ParamField path="input.endpoint.queryParams" type="Set<string>" required>
+      Set of observed query parameter names
+    </ParamField>
+  </ParamField>
+  
+  <ParamField path="input.method" type="string" required>
+    HTTP method (GET, POST, PUT, PATCH, DELETE)
+  </ParamField>
+  
+  <ParamField path="input.requestSchema" type="any" required>
+    JSON schema for request body
+  </ParamField>
+  
+  <ParamField path="input.responseSchema" type="any" required>
+    JSON schema for response body
+  </ParamField>
+  
+  <ParamField path="input.headers" type="Record<string, string>" required>
+    Request headers (used for security detection)
+  </ParamField>
+  
+  <ParamField path="input.statusCode" type="number" required>
+    HTTP response status code
+  </ParamField>
+</ParamField>
+
+**Example:**
+
+```typescript
+const generator = new OpenAPIGenerator();
+
+generator.addEndpoint({
+  endpoint: {
+    pattern: "/api/users/{id}",
+    pathParams: ["id"],
+    queryParams: new Set(["include"])
+  },
+  method: "GET",
+  requestSchema: null,
+  responseSchema: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      name: { type: "string" },
+      email: { type: "string" }
+    },
+    required: ["id", "name", "email"]
+  },
+  headers: {
+    "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+  },
+  statusCode: 200
+});
+```
+
+### getSpec
+
+Get current OpenAPI specification.
+
+```typescript
+getSpec(): OpenAPISpec
+```
+
+<ResponseField name="spec" type="OpenAPISpec">
+  Current OpenAPI 3.1 specification object
+</ResponseField>
+
+**Example:**
+
+```typescript
+const spec = generator.getSpec();
+
+console.log(`OpenAPI Version: ${spec.openapi}`);
+console.log(`Title: ${spec.info.title}`);
+console.log(`Paths: ${Object.keys(spec.paths).length}`);
+```
+
+### export
+
+Export specification in requested format.
+
+```typescript
+export(format: "json" | "yaml"): string
+```
+
+<ParamField path="format" type="string" required>
+  Export format: `"json"` or `"yaml"`
+</ParamField>
+
+<ResponseField name="spec" type="string">
+  Serialized OpenAPI specification
+</ResponseField>
+
+**Example:**
+
+```typescript
+// Export as JSON
+const jsonSpec = generator.export("json");
+fs.writeFileSync("openapi.json", jsonSpec);
+
+// Export as YAML
+const yamlSpec = generator.export("yaml");
+fs.writeFileSync("openapi.yaml", yamlSpec);
+```
+
+### setServer
+
+Set server URL in specification.
+
+```typescript
+setServer(url: string, description?: string): void
+```
+
+<ParamField path="url" type="string" required>
+  Server URL (e.g., `https://api.example.com`)
+</ParamField>
+
+<ParamField path="description" type="string">
+  Optional server description
+</ParamField>
+
+**Example:**
+
+```typescript
+generator.setServer("https://api.example.com", "Production API");
+generator.setServer("https://staging-api.example.com", "Staging API");
+```
+
+## Interfaces
+
+### OpenAPISpec
+
+OpenAPI 3.1 specification structure.
+
+```typescript
+interface OpenAPISpec {
+  openapi: string;
+  info: {
+    title: string;
+    version: string;
+    description?: string;
+  };
+  servers?: Array<{
+    url: string;
+    description?: string;
+  }>;
+  paths: Record<string, PathItem>;
+  components?: {
+    schemas?: Record<string, any>;
+    securitySchemes?: Record<string, any>;
+  };
+  security?: Array<Record<string, string[]>>;
+}
+```
+
+### AddEndpointInput
+
+Input for adding an endpoint.
+
+```typescript
+interface AddEndpointInput {
+  endpoint: {
+    pattern: string;
+    pathParams: string[];
+    queryParams: Set<string>;
+  };
+  method: string;
+  requestSchema: any;
+  responseSchema: any;
+  headers: Record<string, string>;
+  statusCode: number;
+}
+```
+
+## Security scheme detection
+
+The generator automatically detects and adds security schemes based on request headers:
+
+### Bearer authentication
+
+```typescript
+// Request with Bearer token
+headers: {
+  "Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+
+// Generated security scheme
+{
+  "bearerAuth": {
+    "type": "http",
+    "scheme": "bearer",
+    "bearerFormat": "JWT"
+  }
+}
+```
+
+### Basic authentication
+
+```typescript
+// Request with Basic auth
+headers: {
+  "Authorization": "Basic dXNlcm5hbWU6cGFzc3dvcmQ="
+}
+
+// Generated security scheme
+{
+  "basicAuth": {
+    "type": "http",
+    "scheme": "basic"
+  }
+}
+```
+
+### API key authentication
+
+```typescript
+// Request with API key
+headers: {
+  "x-api-key": "abc123def456"
+}
+
+// Generated security scheme
+{
+  "apiKey_x_api_key": {
+    "type": "apiKey",
+    "in": "header",
+    "name": "x-api-key"
+  }
+}
+```
+
+**Detected API key headers:**
+
+- `x-api-key`
+- `api-key`
+- `apikey`
+
+## Automatic field generation
+
+### Operation summary
+
+Generated from HTTP method and endpoint:
+
+```typescript
+// GET /api/users/{id}
+→ "Get id"
+
+// POST /api/users
+→ "Create users"
+
+// PUT /api/users/{id}
+→ "Update id"
+
+// DELETE /api/users/{id}
+→ "Delete id"
+```
+
+### Operation ID
+
+Generated as camelCase from method and path:
+
+```typescript
+// GET /api/users/{id}
+→ "getApiUsersId"
+
+// POST /api/users
+→ "postApiUsers"
+
+// PUT /api/users/{id}/profile
+→ "putApiUsersIdProfile"
+```
+
+### Status descriptions
+
+Automatic descriptions for common status codes:
+
+```typescript
+200 → "Successful response"
+201 → "Resource created"
+204 → "No content"
+400 → "Bad request"
+401 → "Unauthorized"
+403 → "Forbidden"
+404 → "Not found"
+500 → "Internal server error"
+```
+
+## Parameter handling
+
+### Path parameters
+
+Path parameters are automatically added as required:
+
+```typescript
+// Endpoint: /api/users/{id}/posts/{postId}
+// Path params: ["id", "postId"]
+
+// Generated parameters
+[
+  {
+    "name": "id",
+    "in": "path",
+    "required": true,
+    "schema": { "type": "string" }
+  },
+  {
+    "name": "postId",
+    "in": "path",
+    "required": true,
+    "schema": { "type": "string" }
+  }
+]
+```
+
+### Query parameters
+
+Query parameters are added as optional:
+
+```typescript
+// Query params: Set(["page", "limit", "sort"])
+
+// Generated parameters
+[
+  {
+    "name": "page",
+    "in": "query",
+    "required": false,
+    "schema": { "type": "string" }
+  },
+  {
+    "name": "limit",
+    "in": "query",
+    "required": false,
+    "schema": { "type": "string" }
+  },
+  {
+    "name": "sort",
+    "in": "query",
+    "required": false,
+    "schema": { "type": "string" }
+  }
+]
+```
+
+## Request body handling
+
+Request bodies are only added for methods that typically have bodies:
+
+```typescript
+// POST, PUT, PATCH - Request body is added
+generator.addEndpoint({
+  method: "POST",
+  requestSchema: { type: "object", properties: { ... } },
+  // ...
+});
+
+// GET, DELETE - Request body is ignored
+generator.addEndpoint({
+  method: "GET",
+  requestSchema: null,  // Ignored for GET
+  // ...
+});
+```
+
+## Complete example
+
+```typescript
+import { OpenAPIGenerator } from "playcapture";
+import fs from "fs";
+
+const generator = new OpenAPIGenerator();
+
+// Set server
+generator.setServer("https://api.example.com", "Production API");
+
+// Add endpoints
+generator.addEndpoint({
+  endpoint: {
+    pattern: "/api/users/{id}",
+    pathParams: ["id"],
+    queryParams: new Set(["include"])
+  },
+  method: "GET",
+  requestSchema: null,
+  responseSchema: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      name: { type: "string" },
+      email: { type: "string" }
+    }
+  },
+  headers: {
+    "Authorization": "Bearer token123"
+  },
+  statusCode: 200
+});
+
+generator.addEndpoint({
+  endpoint: {
+    pattern: "/api/users",
+    pathParams: [],
+    queryParams: new Set()
+  },
+  method: "POST",
+  requestSchema: {
+    type: "object",
+    properties: {
+      name: { type: "string" },
+      email: { type: "string" }
+    },
+    required: ["name", "email"]
+  },
+  responseSchema: {
+    type: "object",
+    properties: {
+      id: { type: "string" },
+      name: { type: "string" },
+      email: { type: "string" }
+    }
+  },
+  headers: {
+    "Authorization": "Bearer token123"
+  },
+  statusCode: 201
+});
+
+// Export
+const spec = generator.getSpec();
+console.log(`Generated spec with ${Object.keys(spec.paths).length} paths`);
+
+fs.writeFileSync("openapi.json", generator.export("json"));
+fs.writeFileSync("openapi.yaml", generator.export("yaml"));
+```

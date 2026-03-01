@@ -1,0 +1,185 @@
+---
+title: Options
+description: Detailed reference for all CLI options and flags
+---
+
+This page provides a comprehensive overview of all available options for the PlayCapture CLI.
+
+## Port configuration
+
+### --port (-p)
+
+<ParamField path="--port" type="number" default="3333">
+  Specifies the local port for the dashboard server and API endpoints.
+</ParamField>
+
+The port option controls which port the dashboard web interface and API will run on. If the port is already in use, PlayCapture will fail to start.
+
+**Short form**: `-p`
+
+**Examples**:
+
+<CodeGroup>
+```bash Default port
+playcapture start https://api.example.com
+# Dashboard available at http://localhost:3333
+```
+
+```bash Custom port
+playcapture start https://api.example.com --port 8080
+# Dashboard available at http://localhost:8080
+```
+
+```bash Short form
+playcapture start https://api.example.com -p 4000
+# Dashboard available at http://localhost:4000
+```
+</CodeGroup>
+
+## Browser configuration
+
+### --headless
+
+<ParamField path="--headless" type="boolean" default="false">
+  Run the browser in headless mode without a visible window.
+</ParamField>
+
+By default, PlayCapture launches a **visible** Playwright browser window so you can interact with the website naturally. Enable headless mode for automated or CI/CD environments where you don't need to see the browser.
+
+**Examples**:
+
+<CodeGroup>
+```bash Visible browser (default)
+playcapture start https://api.example.com
+# Browser window appears - interact normally
+```
+
+```bash Headless mode
+playcapture start https://api.example.com --headless
+# Browser runs in background
+```
+</CodeGroup>
+
+<Note>
+Headless mode is useful for:
+- CI/CD pipelines
+- Automated testing environments
+- Server environments without a display
+- When you want to minimize resource usage
+</Note>
+
+## Capture configuration
+
+### --capture
+
+<ParamField path="--capture" type="string" default="full">
+  Specifies the capture mode for network traffic monitoring.
+</ParamField>
+
+PlayCapture supports two capture modes:
+
+- **`full`** (default): Uses Playwright's resource capture combined with in-page WebSockets for comprehensive traffic monitoring
+- **`basic`**: Uses in-page hooks only for lightweight capture
+
+**Examples**:
+
+<CodeGroup>
+```bash Full capture (default)
+playcapture start https://api.example.com --capture full
+# Captures all network traffic including resources
+```
+
+```bash Basic capture
+playcapture start https://api.example.com --capture basic
+# Captures traffic via in-page hooks only
+```
+</CodeGroup>
+
+<Warning>
+`basic` mode may miss some network requests that aren't visible to in-page hooks. Use `full` mode for the most comprehensive capture.
+</Warning>
+
+## AI configuration
+
+### --ai
+
+<ParamField path="--ai" type="boolean" default="false">
+  Enable AI-powered schema refinement for better OpenAPI spec quality.
+</ParamField>
+
+When enabled, PlayCapture uses AI to analyze captured traffic and improve the generated OpenAPI schemas. This can help with:
+
+- More accurate type inference
+- Better field descriptions
+- Improved schema structure
+- Detection of patterns and relationships
+
+**Examples**:
+
+<CodeGroup>
+```bash Without AI (default)
+playcapture start https://api.example.com
+# Uses rule-based schema generation
+```
+
+```bash With AI
+playcapture start https://api.example.com --ai
+# AI enhances schema quality
+```
+</CodeGroup>
+
+<Note>
+AI-powered refinement may require additional configuration or API keys depending on your setup. Check your environment variables and configuration.
+</Note>
+
+## Global options
+
+### --version
+
+Display the current version of PlayCapture.
+
+```bash
+playcapture --version
+# Output: 1.0.0
+```
+
+### --help
+
+Display help information for PlayCapture or a specific command.
+
+<CodeGroup>
+```bash General help
+playcapture --help
+# Shows all available commands
+```
+
+```bash Command-specific help
+playcapture start --help
+# Shows help for the start command
+```
+</CodeGroup>
+
+## Combining options
+
+You can combine multiple options to customize PlayCapture's behavior:
+
+<CodeGroup>
+```bash Production monitoring
+playcapture start https://api.example.com \
+  --port 8080 \
+  --headless \
+  --ai
+```
+
+```bash Development with custom port
+playcapture start http://localhost:3000 \
+  -p 4000 \
+  --capture full
+```
+
+```bash Minimal overhead
+playcapture start https://api.example.com \
+  --headless \
+  --capture basic
+```
+</CodeGroup>

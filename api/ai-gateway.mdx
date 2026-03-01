@@ -1,0 +1,314 @@
+---
+title: AI gateway
+description: Minimal wrapper around the AI SDK for text generation, streaming, and embeddings
+---
+
+The AI Gateway module provides simple, well-documented helpers for working with AI models through the Vercel AI SDK.
+
+## Overview
+
+The AI Gateway:
+- Manages API keys in memory (no disk writes)
+- Generates text synchronously and via streaming
+- Creates embeddings for single and batch inputs
+- Falls back to environment variables when no explicit key is set
+- Intentionally lightweight for easy provider swapping
+
+## API key management
+
+### setApiKey
+
+Set the API key used for subsequent AI requests.
+
+```typescript
+import { setApiKey } from '@playcapture/dev-tools';
+
+setApiKey('your-api-key-here');
+```
+
+<ParamField path="key" type="string | null" required>
+  AI Gateway API key to store in memory. Pass `null` to unset the key.
+</ParamField>
+
+This function:
+- Stores the key in memory for the current process
+- Sets `process.env.AI_GATEWAY_API_KEY` so AI SDK can access it
+- Does not persist the key to disk
+
+### getApiKey
+
+Get the currently configured API key without exposing it to clients.
+
+```typescript
+import { getApiKey } from '@playcapture/dev-tools';
+
+const key = getApiKey();
+if (!key) {
+  console.log('No API key configured');
+}
+```
+
+<ResponseField name="string | null" type="string | null">
+  Returns the in-memory API key, or `null` if none is configured
+</ResponseField>
+
+### clearApiKey
+
+Unset the in-memory API key and remove the environment variable.
+
+```typescript
+import { clearApiKey } from '@playcapture/dev-tools';
+
+clearApiKey();
+```
+
+This function:
+- Clears the in-memory key
+- Deletes `process.env.AI_GATEWAY_API_KEY`
+
+## Text generation
+
+### generateText
+
+Generate text synchronously (awaits final completion).
+
+```typescript
+import { generateText } from '@playcapture/dev-tools';
+
+const result = await generateText({
+  model: 'openai/gpt-4',
+  prompt: 'Write a function to reverse a string',
+});
+
+console.log(result.text);
+```
+
+<ParamField path="params" type="GenerateTextParams" required>
+  Configuration for text generation
+  
+  <ParamField path="params.model" type="string" required>
+    Model identifier (e.g., 'openai/gpt-4', 'anthropic/claude-3-sonnet')
+  </ParamField>
+  
+  <ParamField path="params.prompt" type="string" required>
+    Text prompt to send to the model
+  </ParamField>
+  
+  <ParamField path="params.headers" type="Record<string, string>">
+    Optional provider-specific headers for model variants or beta flags
+  </ParamField>
+  
+  <ParamField path="params.providerOptions" type="any">
+    Optional provider routing options forwarded to the AI SDK
+  </ParamField>
+</ParamField>
+
+<ResponseField name="Promise<{ text: string }>" type="object">
+  Object containing the generated text
+  
+  <ResponseField name="text" type="string">
+    The model's text output
+  </ResponseField>
+</ResponseField>
+
+### streamText
+
+Generate text via streaming (returns async iterator).
+
+```typescript
+import { streamText } from '@playcapture/dev-tools';
+
+const stream = streamText({
+  model: 'openai/gpt-4',
+  prompt: 'Explain how HTTP works',
+});
+
+for await (const part of stream.textStream) {
+  process.stdout.write(part);
+}
+```
+
+<ParamField path="params" type="GenerateTextParams" required>
+  Same parameters as `generateText`
+</ParamField>
+
+<ResponseField name="StreamTextResult" type="object">
+  Object with async iterators for streaming text parts
+  
+  <ResponseField name="textStream" type="AsyncIterable<string>">
+    Async iterator over text chunks from the model
+  </ResponseField>
+</ResponseField>
+
+## Embeddings
+
+### embed
+
+Create an embedding for a single piece of text.
+
+```typescript
+import { embed } from '@playcapture/dev-tools';
+
+const vector = await embed('Hello world');
+console.log(vector); // [0.123, -0.456, ...]
+```
+
+<ParamField path="text" type="string" required>
+  Text to create an embedding for
+</ParamField>
+
+<ParamField path="model" type="string" default="openai/text-embedding-3-small">
+  Embedding model to use
+</ParamField>
+
+<ResponseField name="Promise<number[]>" type="number[]">
+  Array of numbers representing the embedding vector
+</ResponseField>
+
+### embedMany
+
+Create embeddings for multiple texts in a single batch call.
+
+```typescript
+import { embedMany } from '@playcapture/dev-tools';
+
+const vectors = await embedMany([
+  'First document',
+  'Second document',
+  'Third document',
+]);
+
+console.log(vectors.length); // 3
+console.log(vectors[0]); // [0.123, -0.456, ...]
+```
+
+<ParamField path="values" type="string[]" required>
+  Array of texts to create embeddings for
+</ParamField>
+
+<ParamField path="model" type="string" default="openai/text-embedding-3-small">
+  Embedding model to use
+</ParamField>
+
+<ResponseField name="Promise<number[][]>" type="number[][]">
+  Array of embedding vectors corresponding to input texts
+</ResponseField>
+
+## Example: Complete workflow
+
+```typescript
+import {
+  setApiKey,
+  generateText,
+  streamText,
+  embed,
+  embedMany,
+  clearApiKey,
+} from '@playcapture/dev-tools';
+
+// Set API key
+setApiKey(process.env.OPENAI_API_KEY);
+
+// Generate text synchronously
+const result = await generateText({
+  model: 'openai/gpt-4',
+  prompt: 'Explain REST APIs in one sentence',
+});
+console.log('Generated:', result.text);
+
+// Stream text
+console.log('\nStreaming:');
+const stream = streamText({
+  model: 'openai/gpt-4',
+  prompt: 'List three HTTP methods',
+});
+
+for await (const chunk of stream.textStream) {
+  process.stdout.write(chunk);
+}
+
+// Create embeddings
+const singleVector = await embed('API documentation');
+console.log('\nEmbedding dimensions:', singleVector.length);
+
+const batchVectors = await embedMany([
+  'GET /users',
+  'POST /users',
+  'DELETE /users/:id',
+]);
+console.log('Batch embeddings:', batchVectors.length);
+
+// Cleanup
+clearApiKey();
+```
+
+## API key priority
+
+The module checks for API keys in this order:
+
+1. In-memory key set via `setApiKey()`
+2. `process.env.AI_GATEWAY_API_KEY`
+
+If no key is found, AI SDK calls will fail with authentication errors.
+
+## Provider support
+
+The AI Gateway works with any provider supported by the Vercel AI SDK:
+
+- OpenAI (`openai/gpt-4`, `openai/gpt-3.5-turbo`)
+- Anthropic (`anthropic/claude-3-opus`, `anthropic/claude-3-sonnet`)
+- Google (`google/gemini-pro`)
+- Cohere (`cohere/command`)
+- And more
+
+Refer to the [AI SDK documentation](https://sdk.vercel.ai/docs) for full provider details.
+
+## Error handling
+
+All functions delegate to the AI SDK and propagate errors. Common errors:
+
+```typescript
+try {
+  const result = await generateText({
+    model: 'openai/gpt-4',
+    prompt: 'Hello',
+  });
+} catch (error) {
+  // API key missing or invalid
+  // Rate limit exceeded
+  // Network error
+  // Invalid model name
+  console.error('AI request failed:', error);
+}
+```
+
+## TypeScript types
+
+```typescript
+export interface GenerateTextParams {
+  model: string;
+  prompt: string;
+  headers?: Record<string, string>;
+  providerOptions?: any;
+}
+
+export function setApiKey(key: string | null): void;
+export function getApiKey(): string | null;
+export function clearApiKey(): void;
+
+export async function generateText(
+  params: GenerateTextParams
+): Promise<{ text: string }>;
+
+export function streamText(params: GenerateTextParams): StreamTextResult;
+
+export async function embed(
+  text: string,
+  model?: string
+): Promise<number[]>;
+
+export async function embedMany(
+  values: string[],
+  model?: string
+): Promise<number[][]>;
+```

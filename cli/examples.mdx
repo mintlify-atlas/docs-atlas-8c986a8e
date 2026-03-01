@@ -1,0 +1,290 @@
+---
+title: Examples
+description: Real-world examples and usage patterns for PlayCapture CLI
+---
+
+Learn how to use PlayCapture with practical examples for common scenarios.
+
+## Basic usage
+
+### Capture traffic from a public API
+
+The simplest way to start capturing is with just a URL:
+
+```bash
+playcapture start https://api.github.com
+```
+
+**Output**:
+```bash
+🔍 API Inspect
+
+Target: https://api.github.com
+Dashboard: http://localhost:3333
+
+Starting dashboard and browser...
+• Dashboard URL : http://localhost:3333
+• WebSocket feed : ws://localhost:3333
+• Export endpoint : http://localhost:3333/api/export?type=openapi&format=json
+• Playwright browser : visible (default)
+
+Quick tips:
+- Open the dashboard in your browser to see live requests, inferred endpoints and schemas.
+- Interact with the Playwright browser window that opens to generate traffic.
+- Use the Export button in the UI or the /api/export endpoint to download OpenAPI specs.
+
+✓ Dashboard running on http://localhost:3333
+✓ Browser launched with network capture enabled
+
+→ Interact with the Playwright browser window. Live traffic will appear in the dashboard.
+```
+
+### Capture from a local development server
+
+```bash
+playcapture start http://localhost:3000
+```
+
+This is useful for documenting APIs during development.
+
+## Advanced usage
+
+### Custom port for the dashboard
+
+If port 3333 is already in use, specify a different port:
+
+```bash
+playcapture start https://api.example.com --port 8080
+```
+
+The dashboard will be available at `http://localhost:8080`.
+
+### Headless mode for automation
+
+Run without a visible browser window:
+
+```bash
+playcapture start https://api.example.com --headless
+```
+
+Perfect for:
+- CI/CD pipelines
+- Automated documentation generation
+- Server environments
+- Background monitoring
+
+### AI-enhanced schema generation
+
+Enable AI to improve the quality of generated OpenAPI specs:
+
+```bash
+playcapture start https://api.example.com --ai
+```
+
+The AI will:
+- Infer more accurate types
+- Generate better field descriptions
+- Detect patterns in API responses
+- Improve overall schema structure
+
+### Basic capture mode
+
+Use lightweight in-page hooks only:
+
+```bash
+playcapture start https://api.example.com --capture basic
+```
+
+This reduces overhead but may miss some network requests.
+
+## Real-world scenarios
+
+### Document a REST API during manual testing
+
+<CodeGroup>
+```bash Command
+playcapture start https://api.example.com --ai
+```
+
+```bash Workflow
+# 1. Run the command
+playcapture start https://api.example.com --ai
+
+# 2. Open the dashboard in your browser
+# Visit: http://localhost:3333
+
+# 3. In the Playwright browser:
+#    - Log in to the application
+#    - Navigate through different pages
+#    - Trigger API calls by using the UI
+
+# 4. Watch the dashboard update in real-time
+#    - See captured endpoints
+#    - View inferred schemas
+#    - Monitor request/response patterns
+
+# 5. Export the OpenAPI spec
+#    - Click "Export" in the dashboard UI
+#    - Or visit: http://localhost:3333/api/export?type=openapi&format=json
+
+# 6. Stop capture when done
+#    - Press Ctrl+C in the terminal
+```
+</CodeGroup>
+
+### Capture WebSocket and HTTP traffic
+
+```bash
+playcapture start https://app.example.com --capture full
+```
+
+Full capture mode monitors:
+- HTTP/HTTPS requests
+- WebSocket connections
+- Fetch API calls
+- XMLHttpRequest calls
+- Resource loads
+
+### CI/CD integration
+
+<CodeGroup>
+```bash GitHub Actions
+# In your workflow file
+- name: Generate API documentation
+  run: |
+    npm install -g playcapture
+    playcapture start https://api.example.com \
+      --headless \
+      --port 8080 \
+      --ai &
+    
+    # Wait for server to start
+    sleep 5
+    
+    # Run your API tests
+    npm run test:api
+    
+    # Export the spec
+    curl http://localhost:8080/api/export?type=openapi&format=json \
+      -o openapi.json
+```
+
+```bash GitLab CI
+# In .gitlab-ci.yml
+generate-docs:
+  script:
+    - npm install -g playcapture
+    - playcapture start https://api.example.com --headless --ai &
+    - sleep 5
+    - npm run test:api
+    - curl http://localhost:3333/api/export?type=openapi&format=json -o openapi.json
+  artifacts:
+    paths:
+      - openapi.json
+```
+</CodeGroup>
+
+### Monitor multiple environments
+
+<CodeGroup>
+```bash Development
+playcapture start http://localhost:3000 -p 4001
+```
+
+```bash Staging
+playcapture start https://staging.api.example.com -p 4002 --ai
+```
+
+```bash Production
+playcapture start https://api.example.com -p 4003 --ai --headless
+```
+</CodeGroup>
+
+Each instance runs on a different port, allowing simultaneous monitoring.
+
+### Test authentication flows
+
+```bash
+playcapture start https://app.example.com --capture full
+```
+
+**Workflow**:
+1. Browser opens to the login page
+2. Manually log in with test credentials
+3. Navigate through protected routes
+4. PlayCapture captures all authenticated API calls
+5. Export includes auth headers and patterns
+
+## Export examples
+
+### Download OpenAPI spec via API
+
+```bash
+curl http://localhost:3333/api/export?type=openapi&format=json -o openapi.json
+```
+
+### Export in different formats
+
+<CodeGroup>
+```bash JSON
+curl "http://localhost:3333/api/export?type=openapi&format=json" -o spec.json
+```
+
+```bash YAML
+curl "http://localhost:3333/api/export?type=openapi&format=yaml" -o spec.yaml
+```
+</CodeGroup>
+
+## Troubleshooting
+
+### Port already in use
+
+```bash
+# Error: Port 3333 is already in use
+playcapture start https://api.example.com --port 8080
+```
+
+### Check if PlayCapture is running
+
+```bash
+# On Linux/Mac
+lsof -i :3333
+
+# On Windows
+netstat -ano | findstr :3333
+```
+
+### Clean shutdown
+
+Always use `Ctrl+C` to stop PlayCapture gracefully:
+
+```bash
+⏸  Shutting down...
+✓ Closed successfully
+```
+
+This ensures:
+- Browser closes properly
+- Server stops cleanly
+- Resources are released
+- Data is saved
+
+## Tips and best practices
+
+<CardGroup cols={2}>
+  <Card title="Use visible browser during development" icon="window-restore">
+    Keep `--headless` off when developing so you can see and interact with the browser naturally.
+  </Card>
+  
+  <Card title="Enable AI for production specs" icon="sparkles">
+    Use `--ai` when generating documentation for external consumption to get higher quality schemas.
+  </Card>
+  
+  <Card title="Use full capture mode" icon="expand">
+    Stick with `--capture full` (default) unless you have specific performance constraints.
+  </Card>
+  
+  <Card title="Monitor the dashboard" icon="chart-line">
+    Keep the dashboard open in your browser to watch requests in real-time and verify capture is working.
+  </Card>
+</CardGroup>

@@ -1,0 +1,232 @@
+---
+title: Export formats
+description: Learn how to export captured API traffic to different formats including OpenAPI, JSON, YAML, cURL, and Postman collections.
+---
+
+PlayCapture supports multiple export formats for your captured API traffic, making it easy to integrate with your existing development workflow.
+
+## Supported formats
+
+### OpenAPI specification
+
+PlayCapture automatically generates OpenAPI 3.1 specifications from captured network traffic. The specification includes inferred endpoints, schemas, authentication methods, and parameters.
+
+<Tabs>
+  <Tab title="JSON">
+    ```typescript
+    import { OpenAPIGenerator } from '@/dev-tools/core/openapi-generator';
+    
+    const generator = new OpenAPIGenerator();
+    const jsonSpec = generator.export('json');
+    ```
+    
+    The JSON format is ideal for:
+    - Programmatic processing
+    - Version control
+    - Integration with CI/CD pipelines
+  </Tab>
+  
+  <Tab title="YAML">
+    ```typescript
+    import { OpenAPIGenerator } from '@/dev-tools/core/openapi-generator';
+    
+    const generator = new OpenAPIGenerator();
+    const yamlSpec = generator.export('yaml');
+    ```
+    
+    The YAML format is ideal for:
+    - Human readability
+    - Documentation sites
+    - API design tools
+  </Tab>
+</Tabs>
+
+Reference: [src/dev-tools/core/openapi-generator.ts:326](../source/src/dev-tools/core/openapi-generator.ts#L326)
+
+### Using export helpers
+
+PlayCapture provides utility functions for exporting specs to files:
+
+```typescript
+import { exportOpenAPISpec } from '@/dev-tools/utils/export-helpers';
+import { OpenAPISpec } from '@/dev-tools/core/openapi-generator';
+
+const spec: OpenAPISpec = {
+  openapi: '3.1.0',
+  info: {
+    title: 'My API',
+    version: '1.0.0'
+  },
+  paths: {}
+};
+
+// Export as JSON
+await exportOpenAPISpec(spec, './openapi.json', 'json');
+
+// Export as YAML
+await exportOpenAPISpec(spec, './openapi.yaml', 'yaml');
+```
+
+Reference: [src/dev-tools/utils/export-helpers.ts:20](../source/src/dev-tools/utils/export-helpers.ts#L20)
+
+## Transaction exports
+
+### Raw transaction data
+
+Export all captured requests and responses as JSON for custom processing:
+
+```typescript
+import { exportTransactions } from '@/dev-tools/utils/export-helpers';
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+
+const coordinator = new CaptureCoordinator({ aiEnabled: false });
+const transactions = coordinator.getTransactions();
+
+await exportTransactions(transactions, './captured-traffic.json');
+```
+
+Reference: [src/dev-tools/utils/export-helpers.ts:64](../source/src/dev-tools/utils/export-helpers.ts#L64)
+
+### cURL commands
+
+Generate ready-to-run cURL commands from captured requests:
+
+```typescript
+import { generateCurlCommand } from '@/dev-tools/utils/export-helpers';
+
+const curlCommand = generateCurlCommand(transaction);
+console.log(curlCommand);
+```
+
+Example output:
+
+```bash
+curl -X POST 'https://api.example.com/users' \
+  -H 'Content-Type: application/json' \
+  -H 'Authorization: Bearer token123' \
+  -d '{"name":"John Doe","email":"john@example.com"}'
+```
+
+Reference: [src/dev-tools/utils/export-helpers.ts:37](../source/src/dev-tools/utils/export-helpers.ts#L37)
+
+## Postman collections
+
+Export captured traffic as Postman collections for API testing and sharing:
+
+<Steps>
+  <Step title="Generate collection">
+    ```typescript
+    import { generatePostmanCollection } from '@/dev-tools/utils/export-helpers';
+    
+    const transactions = coordinator.getTransactions();
+    const collection = generatePostmanCollection(
+      transactions,
+      'My API Collection'
+    );
+    ```
+  </Step>
+  
+  <Step title="Save to file">
+    ```typescript
+    import { exportPostmanCollection } from '@/dev-tools/utils/export-helpers';
+    
+    await exportPostmanCollection(
+      transactions,
+      './postman-collection.json',
+      'My API Collection'
+    );
+    ```
+  </Step>
+  
+  <Step title="Import to Postman">
+    Open Postman, click Import, and select the generated JSON file.
+  </Step>
+</Steps>
+
+The Postman collection includes:
+- Request method and URL
+- All headers
+- Request body (formatted as JSON)
+- Organized by endpoint
+
+Reference: [src/dev-tools/utils/export-helpers.ts:79](../source/src/dev-tools/utils/export-helpers.ts#L79)
+
+## Programmatic access
+
+Access the current specification programmatically:
+
+```typescript
+import { CaptureCoordinator } from '@/dev-tools/core/capture-coordinator';
+
+const coordinator = new CaptureCoordinator({ aiEnabled: false });
+
+// Get the full OpenAPI spec object
+const spec = coordinator.getOpenAPISpec();
+
+// Export as string
+const jsonSpec = coordinator.exportSpec('json');
+const yamlSpec = coordinator.exportSpec('yaml');
+```
+
+Reference: [src/dev-tools/core/capture-coordinator.ts:283](../source/src/dev-tools/core/capture-coordinator.ts#L283)
+
+## OpenAPI specification structure
+
+The generated OpenAPI spec follows the 3.1.0 standard and includes:
+
+- **Info**: API title, version, and description
+- **Servers**: Detected base URLs
+- **Paths**: All discovered endpoints with operations
+- **Components**: Inferred schemas and security schemes
+- **Security**: Detected authentication methods
+
+Example structure:
+
+```json
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Captured API",
+    "version": "1.0.0",
+    "description": "API specification generated by observing real browser traffic"
+  },
+  "paths": {
+    "/api/users/{id}": {
+      "get": {
+        "summary": "Get users",
+        "operationId": "getApiUsersId",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object" }
+              }
+            }
+          }
+        },
+        "security": [{ "bearerAuth": [] }]
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  }
+}
+```
+
+Reference: [src/dev-tools/core/openapi-generator.ts:14](../source/src/dev-tools/core/openapi-generator.ts#L14)

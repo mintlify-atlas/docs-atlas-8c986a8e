@@ -1,0 +1,352 @@
+---
+title: Authentication
+description: Learn how PlayCapture automatically detects and documents authentication schemes from captured API traffic.
+---
+
+PlayCapture automatically detects authentication methods used in your API requests and adds them to the generated OpenAPI specification.
+
+## Supported authentication schemes
+
+PlayCapture detects the following authentication types from request headers:
+
+- Bearer token authentication (JWT)
+- Basic authentication
+- API key headers
+
+## Bearer token detection
+
+Bearer tokens are automatically detected from the Authorization header:
+
+```typescript
+// From openapi-generator.ts
+const authHeader = headers.authorization || headers.Authorization;
+
+if (authHeader) {
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    // Bearer token detected
+    if (!this.spec.components!.securitySchemes!.bearerAuth) {
+      this.spec.components!.securitySchemes!.bearerAuth = {
+        type: 'http',
+        scheme: 'bearer',
+        bearerFormat: 'JWT'
+      };
+    }
+    operation.security = [{ bearerAuth: [] }];
+  }
+}
+```
+
+When a request includes `Authorization: Bearer <token>`, PlayCapture:
+
+1. Adds a `bearerAuth` security scheme to the OpenAPI spec
+2. Marks the endpoint as requiring bearer authentication
+3. Assumes JWT format by default
+
+Reference: [src/dev-tools/core/openapi-generator.ts:228](../source/src/dev-tools/core/openapi-generator.ts#L228)
+
+### Example bearer token spec
+
+```json
+{
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "paths": {
+    "/api/users": {
+      "get": {
+        "security": [{ "bearerAuth": [] }]
+      }
+    }
+  }
+}
+```
+
+## Basic authentication
+
+Basic auth is detected from the Authorization header:
+
+```typescript
+// From openapi-generator.ts
+if (authHeader.toLowerCase().startsWith('basic ')) {
+  // Basic auth detected
+  if (!this.spec.components!.securitySchemes!.basicAuth) {
+    this.spec.components!.securitySchemes!.basicAuth = {
+      type: 'http',
+      scheme: 'basic'
+    };
+  }
+  operation.security = [{ basicAuth: [] }];
+}
+```
+
+When a request includes `Authorization: Basic <credentials>`, PlayCapture:
+
+1. Adds a `basicAuth` security scheme to the OpenAPI spec
+2. Marks the endpoint as requiring basic authentication
+
+Reference: [src/dev-tools/core/openapi-generator.ts:238](../source/src/dev-tools/core/openapi-generator.ts#L238)
+
+### Example basic auth spec
+
+```json
+{
+  "components": {
+    "securitySchemes": {
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic"
+      }
+    }
+  },
+  "paths": {
+    "/api/admin": {
+      "get": {
+        "security": [{ "basicAuth": [] }]
+      }
+    }
+  }
+}
+```
+
+## API key detection
+
+PlayCapture automatically detects common API key header patterns:
+
+```typescript
+// From openapi-generator.ts
+const apiKeyHeaders = ['x-api-key', 'api-key', 'apikey'];
+
+apiKeyHeaders.forEach((headerName) => {
+  if (headers[headerName] || headers[headerName.toUpperCase()]) {
+    const schemeName = `apiKey_${headerName.replace(/-/g, '_')}`;
+    
+    if (!this.spec.components!.securitySchemes![schemeName]) {
+      this.spec.components!.securitySchemes![schemeName] = {
+        type: 'apiKey',
+        in: 'header',
+        name: headerName
+      };
+    }
+    
+    operation.security = [{ [schemeName]: [] }];
+  }
+});
+```
+
+Detected API key headers:
+- `x-api-key`
+- `api-key`
+- `apikey`
+
+Reference: [src/dev-tools/core/openapi-generator.ts:251](../source/src/dev-tools/core/openapi-generator.ts#L251)
+
+### Example API key spec
+
+```json
+{
+  "components": {
+    "securitySchemes": {
+      "apiKey_x_api_key": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    }
+  },
+  "paths": {
+    "/api/data": {
+      "get": {
+        "security": [{ "apiKey_x_api_key": [] }]
+      }
+    }
+  }
+}
+```
+
+## How detection works
+
+Authentication detection happens during endpoint processing:
+
+<Steps>
+  <Step title="Capture request headers">
+    When a network request is captured, all headers are stored:
+    
+    ```typescript
+    export interface NetworkRequest {
+      id: string;
+      url: string;
+      method: string;
+      headers: Record<string, string>;
+      body: any;
+      timestamp: number;
+    }
+    ```
+  </Step>
+  
+  <Step title="Process transaction">
+    When a complete transaction is processed, headers are passed to the OpenAPI generator:
+    
+    ```typescript
+    this.openapiGenerator.addEndpoint({
+      endpoint,
+      method: request.method,
+      requestSchema: schemas.request,
+      responseSchema: schemas.response,
+      headers: request.headers,  // Headers are analyzed here
+      statusCode: response.status
+    });
+    ```
+    
+    Reference: [src/dev-tools/core/capture-coordinator.ts:202](../source/src/dev-tools/core/capture-coordinator.ts#L202)
+  </Step>
+  
+  <Step title="Detect security schemes">
+    The OpenAPI generator calls `detectSecurity` to analyze headers:
+    
+    ```typescript
+    addEndpoint(input: AddEndpointInput): void {
+      // ... create operation ...
+      
+      // Detect and add security schemes
+      this.detectSecurity(headers, operation);
+    }
+    ```
+    
+    Reference: [src/dev-tools/core/openapi-generator.ts:214](../source/src/dev-tools/core/openapi-generator.ts#L214)
+  </Step>
+  
+  <Step title="Update specification">
+    Security schemes are added to both:
+    - Global `components.securitySchemes`
+    - Per-operation `security` array
+  </Step>
+</Steps>
+
+## Case insensitivity
+
+Header detection is case-insensitive:
+
+```typescript
+const authHeader = headers.authorization || headers.Authorization;
+
+if (authHeader) {
+  if (authHeader.toLowerCase().startsWith('bearer ')) {
+    // ...
+  }
+}
+```
+
+This works with any casing:
+- `Authorization: Bearer token`
+- `authorization: Bearer token`
+- `AUTHORIZATION: bearer token`
+
+## Multiple authentication methods
+
+If different endpoints use different auth methods, all are added to the spec:
+
+```json
+{
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      },
+      "apiKey_x_api_key": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    }
+  },
+  "paths": {
+    "/api/users": {
+      "get": {
+        "security": [{ "bearerAuth": [] }]
+      }
+    },
+    "/api/public/data": {
+      "get": {
+        "security": [{ "apiKey_x_api_key": [] }]
+      }
+    }
+  }
+}
+```
+
+## Per-endpoint security
+
+Each endpoint can have its own security requirements:
+
+```typescript
+// From openapi-generator.ts
+operation.security = [{ bearerAuth: [] }];
+```
+
+The security is set at the operation level, allowing:
+- Some endpoints to require authentication
+- Other endpoints to be public
+- Different endpoints to use different auth methods
+
+Reference: [src/dev-tools/core/openapi-generator.ts:237](../source/src/dev-tools/core/openapi-generator.ts#L237)
+
+## Limitations
+
+<Warning>
+  PlayCapture detects authentication schemes from headers but does not:
+  - Store actual tokens or credentials
+  - Validate authentication schemes
+  - Support OAuth flows
+  - Detect query parameter or cookie-based auth
+</Warning>
+
+## Testing authentication
+
+To see authentication detection in action:
+
+<Steps>
+  <Step title="Make authenticated requests">
+    ```bash
+    curl https://api.example.com/users \
+      -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+    ```
+  </Step>
+  
+  <Step title="Capture the traffic">
+    PlayCapture will detect the Bearer token from the Authorization header.
+  </Step>
+  
+  <Step title="Export the spec">
+    ```typescript
+    const spec = coordinator.getOpenAPISpec();
+    console.log(spec.components?.securitySchemes);
+    ```
+  </Step>
+  
+  <Step title="Verify detection">
+    The spec should include the appropriate security scheme.
+  </Step>
+</Steps>
+
+## Custom API key headers
+
+If your API uses a different API key header pattern, PlayCapture won't automatically detect it. You'll need to manually add it to the OpenAPI spec after export, or modify the detection logic:
+
+```typescript
+// Custom detection would require modifying:
+// src/dev-tools/core/openapi-generator.ts:251
+const apiKeyHeaders = [
+  'x-api-key', 
+  'api-key', 
+  'apikey',
+  'x-custom-key'  // Add your custom header
+];
+```

@@ -1,0 +1,267 @@
+---
+title: Network capture script
+description: Browser-side script that intercepts fetch, XMLHttpRequest, and WebSocket to capture network events
+---
+
+The `NETWORK_CAPTURE_SCRIPT` is a self-contained JavaScript string injected into inspected pages to capture network traffic from the browser context.
+
+## Overview
+
+This script runs in the page context (not Node.js) and:
+- Wraps native browser APIs without breaking existing functionality
+- Captures request/response data for HTTP calls
+- Tracks WebSocket lifecycle and messages
+- Emits structured events via console logs for the host process to parse
+
+## Export
+
+```typescript
+import { NETWORK_CAPTURE_SCRIPT } from '@playcapture/dev-tools';
+
+// Used with Playwright's addInitScript
+await page.addInitScript(NETWORK_CAPTURE_SCRIPT);
+```
+
+## Intercepted APIs
+
+### fetch API
+
+Wraps `window.fetch` to capture:
+- Request URL, method, headers, and body
+- Response status, headers, and body
+- Request duration using `performance.now()`
+- Automatic JSON parsing for JSON content types
+
+```javascript
+// Before request
+emit('request', {
+  id: 'generated-id',
+  url: 'https://api.example.com/users',
+  method: 'POST',
+  headers: { 'content-type': 'application/json' },
+  body: '{"name":"Alice"}'
+});
+
+// After response
+emit('response', {
+  id: 'generated-id',
+  status: 200,
+  statusText: 'OK',
+  headers: { 'content-type': 'application/json' },
+  body: { id: 1, name: 'Alice' },
+  duration: 142.3
+});
+```
+
+### XMLHttpRequest
+
+Wraps `window.XMLHttpRequest` to capture:
+- `open()` - Method and URL
+- `setRequestHeader()` - Request headers
+- `send()` - Request body and emission of request event
+- `load` event - Response status, headers, and body
+
+```javascript
+// Request event on send()
+emit('request', {
+  id: 'generated-id',
+  method: 'GET',
+  url: 'https://api.example.com/data',
+  headers: { 'authorization': 'Bearer token' },
+  body: null
+});
+
+// Response event on load
+emit('response', {
+  id: 'generated-id',
+  status: 200,
+  statusText: 'OK',
+  headers: { 'content-type': 'application/json' },
+  body: { data: [...] }
+});
+```
+
+### WebSocket
+
+Wraps `window.WebSocket` to capture:
+- Connection opening with URL
+- Outgoing messages via `send()`
+- Incoming messages via `message` event
+- Connection closing
+
+```javascript
+// On connection
+emit('websocket:open', {
+  id: 'generated-id',
+  url: 'wss://api.example.com/live'
+});
+
+// On send
+emit('websocket:send', {
+  id: 'generated-id',
+  data: '{"type":"subscribe"}'
+});
+
+// On message received
+emit('websocket:receive', {
+  id: 'generated-id',
+  data: '{"type":"update","value":42}'
+});
+
+// On close
+emit('websocket:close', {
+  id: 'generated-id'
+});
+```
+
+## Event emission protocol
+
+All events are emitted using console.log with a special prefix:
+
+```javascript
+console.log('[API_INSPECT]' + JSON.stringify({
+  type: 'request' | 'response' | 'error' | 'websocket:*',
+  data: { /* event-specific data */ },
+  timestamp: Date.now()
+}));
+```
+
+The host process (BrowserLauncher) listens for console messages and parses events starting with `[API_INSPECT]`.
+
+## Helper functions
+
+### generateId
+
+Generates unique request/WebSocket identifiers:
+
+```javascript
+function generateId() {
+  return Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+}
+// Example: '1709308800000-k2j5m8x3q'
+```
+
+### parseResponseBody
+
+Safely parses response bodies based on content type:
+
+```javascript
+async function parseResponseBody(response, contentType) {
+  // Tries JSON parsing for application/json
+  // Falls back to text
+  // Returns null on error
+}
+```
+
+### emit
+
+Sends structured events to the host process:
+
+```javascript
+function emit(type, data) {
+  console.log('[API_INSPECT]' + JSON.stringify({
+    type,
+    data,
+    timestamp: Date.now()
+  }));
+}
+```
+
+## URL resolution
+
+All captured URLs are resolved to absolute URLs using the page's base URL:
+
+```javascript
+const url = new URL(relativeOrAbsoluteUrl, location.href).toString();
+```
+
+This ensures relative URLs like `/api/users` become `https://example.com/api/users`.
+
+## Error handling
+
+### Fetch errors
+
+When fetch throws an error:
+
+```javascript
+emit('error', {
+  id: 'request-id',
+  error: error.message
+});
+```
+
+### Response parsing
+
+The script safely handles:
+- Missing content-type headers (attempts JSON parse as fallback)
+- Clone failures (returns null)
+- Non-JSON text responses
+- Binary responses
+
+## Design considerations
+
+### Minimal and self-contained
+
+The script:
+- Has no external dependencies
+- Uses only browser-native APIs
+- Is small enough to inject efficiently
+- Avoids ES6+ features for broad compatibility
+
+### Non-breaking
+
+The script:
+- Preserves original API behavior using `.apply()`
+- Returns original response/XHR/WebSocket objects
+- Throws original errors after capturing them
+- Uses try-catch to prevent injection from breaking pages
+
+### Performance
+
+The script:
+- Uses `response.clone()` to avoid consuming the original response stream
+- Generates IDs efficiently with timestamps + random strings
+- Avoids expensive operations in hot paths
+
+## Example: Complete flow
+
+```javascript
+// Page code
+fetch('https://api.example.com/users', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ name: 'Alice' })
+});
+
+// Captured events emitted by script:
+
+// 1. Request event
+[API_INSPECT]{"type":"request","data":{"id":"1709308800-xyz","url":"https://api.example.com/users","method":"POST","headers":{"content-type":"application/json"},"body":"{\"name\":\"Alice\"}"},"timestamp":1709308800000}
+
+// 2. Response event
+[API_INSPECT]{"type":"response","data":{"id":"1709308800-xyz","status":201,"statusText":"Created","headers":{"content-type":"application/json"},"body":{"id":1,"name":"Alice"},"duration":156.2},"timestamp":1709308956}
+```
+
+## Integration
+
+The script is automatically injected by `BrowserLauncher` before page navigation:
+
+```typescript
+// In BrowserLauncher.injectCaptureHooks()
+await this.page.addInitScript(NETWORK_CAPTURE_SCRIPT);
+```
+
+Events are parsed in `BrowserLauncher.setupEventForwarding()`:
+
+```typescript
+this.page.on('console', async (msg) => {
+  const text = msg.text();
+  if (text.startsWith('[API_INSPECT]')) {
+    const data = JSON.parse(text.replace('[API_INSPECT]', ''));
+    this.options.coordinator.handleNetworkEvent({
+      ...data,
+      source: 'injected'
+    });
+  }
+});
+```

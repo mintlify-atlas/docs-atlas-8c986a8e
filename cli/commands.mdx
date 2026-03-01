@@ -1,0 +1,91 @@
+---
+title: Commands
+description: Complete reference for all PlayCapture CLI commands
+---
+
+PlayCapture provides a simple command-line interface for capturing network traffic and generating OpenAPI specifications from real browser interactions.
+
+## start
+
+Start capturing network traffic from a website. This launches a Playwright browser, starts the dashboard server, and begins monitoring network activity.
+
+```bash
+playcapture start <url>
+```
+
+<ParamField path="url" type="string" required>
+  Target URL to inspect. The browser will navigate to this URL and begin capturing network traffic.
+</ParamField>
+
+### Options
+
+<ParamField path="--port" type="number" default="3333">
+  Local dashboard port. The web dashboard and API endpoints will be served on this port.
+  
+  ```bash
+  playcapture start https://example.com --port 8080
+  ```
+</ParamField>
+
+<ParamField path="--headless" type="boolean" default="false">
+  Run browser in headless mode. By default, PlayCapture shows a visible browser window so you can interact with the site.
+  
+  ```bash
+  playcapture start https://example.com --headless
+  ```
+</ParamField>
+
+<ParamField path="--ai" type="boolean" default="false">
+  Enable optional AI-powered schema refinement. Uses AI to improve the quality and accuracy of generated OpenAPI schemas.
+  
+  ```bash
+  playcapture start https://example.com --ai
+  ```
+</ParamField>
+
+<ParamField path="--capture" type="string" default="full">
+  Capture mode for network traffic:
+  - `basic` - In-page hooks only
+  - `full` - Playwright resource capture + in-page websockets (recommended)
+  
+  ```bash
+  playcapture start https://example.com --capture basic
+  ```
+</ParamField>
+
+### What happens when you run start
+
+When you execute the `start` command, PlayCapture:
+
+1. **Starts the dashboard server** on the specified port (default: 3333)
+2. **Launches a Playwright browser** (visible by default, or headless if specified)
+3. **Navigates to the target URL** and begins capturing network traffic
+4. **Streams captured data** to the dashboard in real-time via WebSocket
+5. **Waits for your interaction** - use Ctrl+C to stop capturing and shut down gracefully
+
+### Available endpoints
+
+Once started, PlayCapture exposes the following endpoints:
+
+- **Dashboard**: `http://localhost:3333` (or your custom port)
+- **WebSocket feed**: `ws://localhost:3333`
+- **Export API**: `http://localhost:3333/api/export?type=openapi&format=json`
+
+## Global options
+
+<ParamField path="--version" type="boolean">
+  Display the current version of PlayCapture.
+  
+  ```bash
+  playcapture --version
+  ```
+</ParamField>
+
+<ParamField path="--help" type="boolean">
+  Display help information for PlayCapture or a specific command.
+  
+  ```bash
+  playcapture --help
+  playcapture start --help
+  ```
+</ParamField>
