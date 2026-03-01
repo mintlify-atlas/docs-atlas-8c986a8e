@@ -1,0 +1,103 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "PlayCapture",
+  "projectDescription": "Local-first developer tool that captures network traffic from Playwright-controlled browsers to generate OpenAPI specifications automatically.",
+  "theme": "aspen",
+  "primaryColor": "#3B82F6",
+  "lightColor": "#60A5FA",
+  "darkColor": "#2563EB",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/how-it-works",
+              "concepts/architecture",
+              "concepts/network-capture",
+              "concepts/inference-engines"
+            ]
+          },
+          {
+            "group": "CLI Reference",
+            "pages": [
+              "cli/commands",
+              "cli/options",
+              "cli/examples"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/export-formats",
+              "guides/ai-features",
+              "guides/filtering-traffic",
+              "guides/authentication",
+              "guides/advanced-usage"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "troubleshooting/common-issues",
+              "troubleshooting/debugging"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Core API",
+            "pages": [
+              "api/capture-coordinator",
+              "api/endpoint-inference-engine",
+              "api/schema-inference-engine",
+              "api/openapi-generator"
+            ]
+          },
+          {
+            "group": "Components",
+            "pages": [
+              "api/dashboard-server",
+              "api/browser-launcher",
+              "api/network-capture-script",
+              "api/ai-gateway"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time network traffic capture with Playwright-controlled Chromium",
+    "Automatic endpoint inference with path parameter detection",
+    "JSON schema generation from request/response samples",
+    "OpenAPI 3.1 specification generation",
+    "Multiple export formats (JSON, YAML, Postman, cURL)",
+    "Optional AI-powered schema refinement",
+    "Authentication scheme detection (Bearer, API keys, Basic auth)",
+    "Local-first with no cloud dependencies"
+  ],
+  "publicApiSurface": [
+    "playcapture start <url>",
+    "CaptureCoordinator class",
+    "EndpointInferenceEngine class",
+    "SchemaInferenceEngine class",
+    "OpenAPIGenerator class",
+    "BrowserLauncher class",
+    "DashboardServer class",
+    "useNetworkCapture React hook"
+  ]
+}
